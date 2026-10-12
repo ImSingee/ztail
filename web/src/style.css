@@ -56,7 +56,7 @@ button {
   color: var(--ink);
   white-space: nowrap;
 }
-button:hover {
+button:hover:not(:disabled) {
   background: var(--surface);
 }
 button:disabled {
@@ -142,13 +142,16 @@ pre {
   color: white;
   border-color: var(--primary);
 }
-.primary:hover {
+.primary:hover:not(:disabled) {
   background: oklch(0.38 0.08 230);
 }
 .destructive {
   background: var(--danger);
   color: white;
   border-color: var(--danger);
+}
+.destructive:hover:not(:disabled) {
+  background: oklch(0.39 0.15 27);
 }
 .full {
   width: 100%;
