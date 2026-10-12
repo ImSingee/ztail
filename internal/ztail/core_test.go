@@ -581,3 +581,80 @@ func TestProxyContracts(t *testing.T) {
 	}
 	t.Logf("actual proxy: preserved path/query/host, HTTPS forwarded protocol, spoofed XFF removed; upload=1048576 bytes; SSE both chunks; WebSocket echo; untrusted TLS returned HTTP %d", resp.StatusCode)
 }
+
+func TestZeaburEnvironmentPortsAndPartialErrors(t *testing.T) {
+	mode := "ok"
+	detailsRequests := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Query     string                     `json:"query"`
+			Variables map[string]json.RawMessage `json:"variables"`
+		}
+		json.NewDecoder(r.Body).Decode(&request)
+		if r.Header.Get("Authorization") != "Bearer fixture-zeabur-key" {
+			t.Error("missing authorization")
+		}
+		if strings.Contains(request.Query, "projects(skip:") {
+			io.WriteString(w, `{"data":{"servers":[{"_id":"demo","name":"Server"}],"projects":{"edges":[{"node":{"_id":"p","name":"App","region":{"id":"server-demo"},"environments":[{"_id":"production","name":"Production"},{"_id":"preview","name":"Preview"}],"services":[{"_id":"svc","name":"web","dnsName":"web"}]}},{"node":{"_id":"other","region":{"id":"server-other"},"environments":[{"_id":"other-env"}],"services":[{"_id":"other-svc"}]}}]}}}`)
+			return
+		}
+		detailsRequests++
+		if mode == "http" {
+			w.WriteHeader(401)
+			return
+		}
+		if !strings.Contains(request.Query, "service(_id: $s0)") || !strings.Contains(request.Query, "ports(environmentID: $e0)") {
+			t.Error("wrong environment-scoped query", request.Query)
+		}
+		data := map[string]any{}
+		for key, value := range request.Variables {
+			if !strings.HasPrefix(key, "s") {
+				continue
+			}
+			var id, env string
+			json.Unmarshal(value, &id)
+			json.Unmarshal(request.Variables["e"+key[1:]], &env)
+			if id != "svc" || (env != "production" && env != "preview") {
+				t.Errorf("wrong service/environment: %s %s", id, env)
+			}
+			port := 3000
+			if env == "preview" {
+				port = 4000
+			}
+			data[key] = map[string]any{"status": "RUNNING", "ports": []ServicePort{{ID: "web", Port: port, Type: "HTTP"}, {ID: "database", Port: 6379, Type: "TCP"}}}
+		}
+		response := map[string]any{"data": data}
+		if mode == "partial" {
+			data["s0"] = nil
+			response["errors"] = []any{map[string]any{"message": "port permission fixture-zeabur-key", "path": []string{"s0", "ports"}}}
+		}
+		jsonResponse(w, 200, response)
+	}))
+	defer api.Close()
+	z := NewZeabur(testConfig(t.TempDir()))
+	z.endpoint = api.URL
+	if err := z.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	envs := z.Catalog().Projects[0].Services[0].Environments
+	if detailsRequests != 1 || envs["production"].Ports[0].Port != 3000 || envs["preview"].Ports[0].Port != 4000 {
+		t.Fatal(detailsRequests, envs)
+	}
+	mode = "partial"
+	if err := z.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	envs = z.Catalog().Projects[0].Services[0].Environments
+	if envs["production"].Ports[0].Port != 3000 || envs["production"].Error == "" || strings.Contains(envs["production"].Error, "fixture-zeabur-key") || envs["preview"].Error != "" || z.Catalog().Error == "" {
+		t.Fatal(envs)
+	}
+	mode = "http"
+	if err := z.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	envs = z.Catalog().Projects[0].Services[0].Environments
+	if envs["preview"].Ports[0].Port != 4000 || !strings.Contains(envs["preview"].Error, "401") {
+		t.Fatal(envs)
+	}
+	t.Log("environment-scoped ports: production3000/preview4000; batched request; other-server excluded; partial GraphQL failure preserves only the affected row; HTTP401 retains stale ports with explicit error")
+}

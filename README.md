@@ -4,6 +4,8 @@
 
 ztail 提供管理面板，从 Zeabur 目录选择项目、环境和服务，或手填集群地址。只有启用的规则才会广告，目录刷新不会自动发布服务。
 
+首页按项目和环境列出服务名称、DNS、ID、部署状态和端口，可搜索和折叠。点击 HTTP/HTTPS 端口的「发布」，确认预填的访问名称即可发布到 tailnet；名称可修改，同一服务在不同环境可分别发布。已有规则提供管理入口。TCP/UDP 和缺失端口可查看并进入完整配置，不自动推断为 Web 服务。
+
 ```text
 tailnet 设备 → https://grafana.<tailnet>.ts.net
             → ztail（tsnet / HTTPS）→ 集群 Service:端口
@@ -116,6 +118,8 @@ docker run --rm -p 8080:8080 -v ztail-data:/data \
 
 Zeabur 后端使用 `service-<serviceID>.environment-<environmentID>.svc.<clusterDomain>:<port>`。服务必须实际部署在所选环境中；API 目录本身不代表运行状态。目录每五分钟刷新，错误保留上一次结果。
 
+端口与部署状态通过 Zeabur 的 `ports(environmentID:)` / `status(environmentID:)` 按环境读取，并批量查询。详情失败时保留该环境的上次数据和错误，快捷发布暂停，其他环境仍可操作。快捷发布默认从服务 DNS 名生成访问名称，冲突时添加数字后缀；确认前不会创建规则。配置了 API Key 时，可在行内表单选择创建缺少的 Tailscale Service 定义。
+
 修改后端保留监听入口；改名先建立新入口，失败时保留旧入口。停用/删除只撤回本节点广告，保留远端 Service 定义。撤回失败持久化并自动重试；连接设置页也展示已删除规则遗留的撤回错误。重启会清理本节点遗留广告，再恢复启用规则。
 
 “已广告”只表示本地声明承载 Service，审批状态未知时请以控制台为准。后端“可达”表示 HTTP/TLS 握手获得响应，不代表应用健康或所有 tailnet 用户均有访问权限。若后端使用自身证书，HTTPS 模式默认校验证书。
@@ -135,6 +139,8 @@ pnpm --dir web test:e2e
 Playwright 启动的是独立 `_test.go` 程序：真实面板、HTTP 接口、SQLite、协调器和代理，替换 Zeabur/Tailscale 控制面。正式镜像中没有测试开关或 fixture 路由。这些测试不证明真实 tailnet 的 MagicDNS、证书或远端审批。
 
 管理 API 使用 cookie 会话，修改请求需要 `X-CSRF-Token`，由 `GET /api/session` 读取。会话为 HttpOnly、SameSite=Strict，HTTPS 下使用 Secure cookie。密码登录仅接受 `POST /api/session`。
+
+页面入口：`/` 为服务目录，`/rules` 为发布规则，`/rules/new` 与 `/rules/<id>` 为完整编辑，`/settings` 为连接设置。服务目录 API 中，每个服务的 `environments[environmentID]` 包含 `status`、`ports`（id/port/type）和 `error`。
 
 | 接口 | 用途 |
 | --- | --- |

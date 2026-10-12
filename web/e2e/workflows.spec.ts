@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { test, expect, Page, APIRequestContext } from "@playwright/test";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
-const assets = "../.acceptances/standalone-ztail/round-1/assets";
+const assets = process.env.ZTAIL_EVIDENCE_DIR || "test-results/evidence";
 mkdirSync(assets, { recursive: true });
 async function capture(page: Page, name: string) {
   await page.screenshot({ path: `${assets}/${name}.png`, fullPage: true });
 }
 async function login(page: Page) {
-  await page.goto("/");
+  await page.goto("/rules");
   await page.getByLabel("管理员密码", { exact: true }).fill("fixture-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(
@@ -39,6 +39,7 @@ async function manual(page: Page, name = "grafana") {
 test.beforeEach(async ({ request }) => {
   const hash = createHash("sha256")
     .update(readFileSync("src/main.tsx"))
+    .update(readFileSync("src/catalog.tsx"))
     .update(readFileSync("../internal/ztail/manager.go"))
     .digest("hex")
     .slice(0, 12);
@@ -73,6 +74,7 @@ test("login rejects wrong password, protects management and supports logout", as
   expect((await request.get("/api/settings")).status()).toBe(401);
   await page.getByLabel("管理员密码", { exact: true }).fill("fixture-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("link", { name: "发布规则", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "发布规则", exact: true }),
   ).toBeVisible();
@@ -308,7 +310,7 @@ test("responsive surfaces and keyboard navigation do not overflow", async ({
       ),
     ).toBe(true);
   }
-  await page.goto("/");
+  await page.goto("/rules");
   await page.keyboard.press("Tab");
   await expect(page.locator(":focus")).toHaveCount(1);
   await page.getByRole("button", { name: "删除 grafana" }).click();

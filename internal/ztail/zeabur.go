@@ -19,7 +19,18 @@ type NamedID struct {
 }
 type Service struct {
 	NamedID
-	DNSName string `json:"dnsName"`
+	DNSName      string                        `json:"dnsName"`
+	Environments map[string]ServiceEnvironment `json:"environments"`
+}
+type ServicePort struct {
+	ID   string `json:"id"`
+	Port int    `json:"port"`
+	Type string `json:"type"`
+}
+type ServiceEnvironment struct {
+	Status string        `json:"status"`
+	Ports  []ServicePort `json:"ports"`
+	Error  string        `json:"error"`
 }
 type Project struct {
 	NamedID
@@ -148,6 +159,7 @@ func (z *Zeabur) Refresh(ctx context.Context) (err error) {
 			}
 		}
 		if !result.Data.Projects.PageInfo.HasNextPage {
+			z.loadServiceEnvironments(ctx, &cat)
 			cat.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 			z.mu.Lock()
 			z.catalog = cat
@@ -160,4 +172,111 @@ func (z *Zeabur) Refresh(ctx context.Context) (err error) {
 		skip += len(result.Data.Projects.Edges)
 	}
 	return errors.New("Zeabur 目录超过查询安全上限，保留上一次完整目录")
+}
+
+// Ports and deployment status are environment-scoped in Zeabur. Batch aliases
+// keep catalogue refresh bounded without interpolating resource IDs into GraphQL.
+func (z *Zeabur) loadServiceEnvironments(ctx context.Context, cat *Catalog) {
+	type lookup struct {
+		project, service int
+		environment      string
+	}
+	var lookups []lookup
+	previous := z.Catalog()
+	cachedDetails := map[string]ServiceEnvironment{}
+	for _, p := range previous.Projects {
+		for _, s := range p.Services {
+			for env, detail := range s.Environments {
+				cachedDetails[p.ID+"/"+s.ID+"/"+env] = detail
+			}
+		}
+	}
+	for pi := range cat.Projects {
+		p := &cat.Projects[pi]
+		for si := range p.Services {
+			p.Services[si].Environments = map[string]ServiceEnvironment{}
+			for _, env := range p.Environments {
+				lookups = append(lookups, lookup{pi, si, env.ID})
+			}
+		}
+	}
+	failed := 0
+	for start := 0; start < len(lookups); start += 32 {
+		end := min(start+32, len(lookups))
+		batch := lookups[start:end]
+		definitions, fields := []string{}, []string{}
+		variables := map[string]string{}
+		for i, item := range batch {
+			definitions = append(definitions, fmt.Sprintf("$s%d: ObjectID!, $e%d: ObjectID!", i, i))
+			fields = append(fields, fmt.Sprintf("s%d: service(_id: $s%d) { status(environmentID: $e%d) ports(environmentID: $e%d) { id port type } }", i, i, i, i))
+			variables[fmt.Sprintf("s%d", i)] = cat.Projects[item.project].Services[item.service].ID
+			variables[fmt.Sprintf("e%d", i)] = item.environment
+		}
+		var result struct {
+			Data   map[string]*ServiceEnvironment `json:"data"`
+			Errors []struct {
+				Message string `json:"message"`
+				Path    []any  `json:"path"`
+			} `json:"errors"`
+		}
+		body, _ := json.Marshal(map[string]any{"query": "query(" + strings.Join(definitions, ",") + ") {" + strings.Join(fields, " ") + "}", "variables": variables})
+		req, requestErr := http.NewRequestWithContext(ctx, "POST", z.endpoint, bytes.NewReader(body))
+		if requestErr != nil {
+			cat.Error = "服务详情请求地址无效"
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+z.key)
+		batchError := ""
+		resp, err := z.client.Do(req)
+		if err != nil {
+			batchError = "服务详情无法连接，请刷新重试"
+		} else {
+			if resp.StatusCode != 200 {
+				batchError = fmt.Sprintf("服务详情返回 HTTP %d，请检查 API Key 和账号权限", resp.StatusCode)
+			} else if json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result) != nil {
+				batchError = "服务详情返回无效数据"
+			}
+			resp.Body.Close()
+		}
+		aliasErrors := map[string]string{}
+		for _, e := range result.Errors {
+			message := strings.ReplaceAll(e.Message, z.key, "[redacted]")
+			if len(e.Path) > 0 {
+				if alias, ok := e.Path[0].(string); ok {
+					aliasErrors[alias] = message
+					continue
+				}
+			}
+			batchError = message
+		}
+		for i, item := range batch {
+			svc := &cat.Projects[item.project].Services[item.service]
+			alias := fmt.Sprintf("s%d", i)
+			detail, message := result.Data[alias], batchError
+			if e := aliasErrors[alias]; e != "" {
+				message = e
+			}
+			if detail == nil && message == "" {
+				message = "服务详情暂不可用，请刷新重试"
+			}
+			if message != "" {
+				failed++
+				cached := ServiceEnvironment{Ports: []ServicePort{}}
+				if old, ok := cachedDetails[cat.Projects[item.project].ID+"/"+svc.ID+"/"+item.environment]; ok {
+					cached = old
+				}
+				cached.Error = message
+				svc.Environments[item.environment] = cached
+			} else {
+				if detail.Ports == nil {
+					detail.Ports = []ServicePort{}
+				}
+				svc.Environments[item.environment] = *detail
+			}
+		}
+	}
+	if failed > 0 {
+		cat.Error = fmt.Sprintf("%d 个服务环境的详情读取失败，已保留上次可用数据。刷新可重试。", failed)
+	}
 }

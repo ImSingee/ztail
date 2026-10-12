@@ -12,8 +12,8 @@ Go application in `internal/ztail`, production entry `cmd/ztail`, embedded Vite 
 ## Auth and surfaces
 - Fixture admin password: fixture-password (test data, never production).
 - GET `/api/session` returns `authenticated`; session cookie is HttpOnly and mutation requires X-CSRF-Token.
-- Web flows: `/`, `/rules/new`, `/rules/<id>`, `/settings`.
-- Playwright: `pnpm --dir web test:e2e`; screenshot/audit evidence saved under `.acceptances/standalone-ztail/round-1/assets`.
+- Web flows: `/` service catalogue, `/rules` publishing rules, `/rules/new`, `/rules/<id>`, `/settings`.
+- Playwright: `pnpm --dir web test:e2e`; screenshot/audit evidence defaults to `web/test-results/evidence`. Set `ZTAIL_EVIDENCE_DIR=../.acceptances/standalone-ztail/round-N/assets` for an acceptance round; never overwrite a published round.
 - Real Zeabur/tailnet checks require user-owned credentials and interactive authorization; never infer success from fixture state.
 
 ## Constraints

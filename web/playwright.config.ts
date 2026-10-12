@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 const buildID = createHash("sha256")
   .update(readFileSync("src/main.tsx"))
+  .update(readFileSync("src/catalog.tsx"))
   .update(readFileSync("../internal/ztail/manager.go"))
   .digest("hex")
   .slice(0, 12);

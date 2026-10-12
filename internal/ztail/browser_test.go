@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -119,7 +120,13 @@ func TestBrowserServer(t *testing.T) {
 				t.Fatal(e)
 			}
 			tail = newFakeTail(c.Tag)
-			catalog = &fakeCatalog{cat: Catalog{Server: NamedID{ID: "server-demo", Name: "Demo Dedicated Server"}, UpdatedAt: time.Now().UTC().Format(time.RFC3339), Projects: []Project{{NamedID: NamedID{ID: "project-a", Name: "Monitoring"}, Environments: []NamedID{{ID: "env-first", Name: "Production"}, {ID: "env-second", Name: "Preview"}}, Services: []Service{{NamedID: NamedID{ID: "service-a", Name: "Grafana"}, DNSName: "grafana"}}}}}}
+			catalog = &fakeCatalog{cat: Catalog{Server: NamedID{ID: "server-demo", Name: "Demo Dedicated Server"}, UpdatedAt: time.Now().UTC().Format(time.RFC3339), Projects: []Project{{NamedID: NamedID{ID: "project-a", Name: "Monitoring"}, Environments: []NamedID{{ID: "env-first", Name: "Production"}, {ID: "env-second", Name: "Preview"}}, Services: []Service{{NamedID: NamedID{ID: "service-a", Name: "Grafana"}, DNSName: "grafana", Environments: map[string]ServiceEnvironment{
+				"env-first":  {Status: "RUNNING", Ports: []ServicePort{{ID: "web", Port: 3000, Type: "HTTP"}, {ID: "metrics", Port: 9090, Type: "TCP"}}},
+				"env-second": {Status: "RUNNING", Ports: []ServicePort{{ID: "web", Port: 4000, Type: "HTTP"}, {ID: "secure", Port: 4443, Type: "HTTPS"}}},
+			}}, {NamedID: NamedID{ID: "service-db", Name: "Redis"}, DNSName: "redis", Environments: map[string]ServiceEnvironment{
+				"env-first":  {Status: "RUNNING", Ports: []ServicePort{{ID: "db", Port: 6379, Type: "TCP"}, {ID: "discovery", Port: 5353, Type: "UDP"}}},
+				"env-second": {Status: "NOT_DEPLOYED", Ports: []ServicePort{}},
+			}}}}}}}
 			registry = &fakeRegistry{tail: tail}
 			app = NewApp(c, store, catalog, tail, registry, assets)
 			app.Version = "e2e-" + os.Getenv("ZTAIL_BUILD_ID")
@@ -166,6 +173,22 @@ func TestBrowserServer(t *testing.T) {
 				if which == "catalog" {
 					catalog.mu.Lock()
 					catalog.failure = enabled
+					catalog.mu.Unlock()
+				}
+				if which == "ports" {
+					catalog.mu.Lock()
+					cat := catalog.cat
+					cat.Projects = append([]Project(nil), cat.Projects...)
+					cat.Projects[0].Services = append([]Service(nil), cat.Projects[0].Services...)
+					cat.Projects[0].Services[0].Environments = maps.Clone(cat.Projects[0].Services[0].Environments)
+					details := cat.Projects[0].Services[0].Environments["env-second"]
+					if enabled {
+						details.Error = "端口详情读取失败"
+					} else {
+						details.Error = ""
+					}
+					cat.Projects[0].Services[0].Environments["env-second"] = details
+					catalog.cat = cat
 					catalog.mu.Unlock()
 				}
 				if which == "registry" {

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
   ArrowUpRight,
+  Cloud,
   Check,
   Copy,
   Globe,
@@ -15,20 +16,31 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
+import { ServiceCatalog } from "./catalog";
 import "./style.css";
 
-type Named = { _id: string; name: string };
-type Project = Named & {
-  environments: Named[];
-  services: (Named & { dnsName: string })[];
+export type Named = { _id: string; name: string };
+export type ServicePort = { id: string; port: number; type: string };
+export type ServiceEnvironment = {
+  status: string;
+  ports: ServicePort[];
+  error: string;
 };
-type Catalog = {
+export type ZeaburService = Named & {
+  dnsName: string;
+  environments: Record<string, ServiceEnvironment>;
+};
+export type Project = Named & {
+  environments: Named[];
+  services: ZeaburService[];
+};
+export type Catalog = {
   server: Named;
   projects: Project[];
   updatedAt: string;
   error: string;
 };
-type Tail = {
+export type Tail = {
   state: string;
   authUrl: string;
   tailnet: string;
@@ -41,7 +53,7 @@ type Tail = {
   https: boolean;
   error: string;
 };
-type Rule = {
+export type Rule = {
   id: string;
   name: string;
   source: "manual" | "zeabur";
@@ -56,7 +68,7 @@ type Rule = {
   revision: number;
   updatedAt: string;
 };
-type RuleView = Rule & {
+export type RuleView = Rule & {
   target: string;
   status: {
     state: string;
@@ -69,7 +81,7 @@ type RuleView = Rule & {
     activeTarget: string;
   };
 };
-type Config = {
+export type Config = {
   serverId: string;
   nodeTag: string;
   serviceTag: string;
@@ -225,6 +237,7 @@ function App() {
   const [session, setSession] = useState<Session | null>(null),
     [initial, setInitial] = useState(true),
     [path, setPath] = useState(location.pathname),
+    [seed, setSeed] = useState<Rule | undefined>(history.state?.draft),
     [rules, setRules] = useState<RuleView[]>([]),
     [catalog, setCatalog] = useState<Catalog | null>(null),
     [tail, setTail] = useState<Tail | null>(null),
@@ -233,8 +246,9 @@ function App() {
     [loadError, setLoadError] = useState(""),
     [busy, setBusy] = useState(false),
     [deleting, setDeleting] = useState<RuleView | null>(null);
-  const navigate = (p: string) => {
-    history.pushState({}, "", p);
+  const navigate = (p: string, draft?: Rule) => {
+    history.pushState({ draft }, "", p);
+    setSeed(draft);
     setPath(p);
     setError("");
     window.scrollTo(0, 0);
@@ -264,7 +278,10 @@ function App() {
       })
       .catch((e) => setError((e as Error).message))
       .finally(() => setInitial(false));
-    const pop = () => setPath(location.pathname),
+    const pop = () => {
+        setPath(location.pathname);
+        setSeed(history.state?.draft);
+      },
       expired = () => {
         csrf = "";
         setSession(null);
@@ -305,6 +322,7 @@ function App() {
   if (!session?.authenticated) return <Login onLogin={setSession} />;
   const editing = path.startsWith("/rules/"),
     settings = path === "/settings",
+    browsing = path === "/",
     editID = path.split("/")[2],
     current = rules.find((r) => r.id === editID);
   return (
@@ -325,11 +343,22 @@ function App() {
         </a>
         <nav aria-label="主导航">
           <a
-            className={!settings ? "active" : ""}
+            className={browsing ? "active" : ""}
             href="/"
             onClick={(e) => {
               e.preventDefault();
               navigate("/");
+            }}
+          >
+            <Cloud size={16} />
+            Zeabur 服务
+          </a>
+          <a
+            className={!settings && !browsing ? "active" : ""}
+            href="/rules"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("/rules");
             }}
           >
             <Globe size={16} />
@@ -372,24 +401,44 @@ function App() {
             catalog={catalog}
             onUpdate={load}
           />
+        ) : browsing ? (
+          <ServiceCatalog
+            catalog={catalog}
+            config={config}
+            tail={tail}
+            rules={rules}
+            onRefresh={async () => {
+              await api("/catalog/refresh", "POST", {});
+              await load();
+            }}
+            onPublish={async (rule) => {
+              const saved = await api<Rule>("/rules", "POST", rule);
+              await load();
+              return saved;
+            }}
+            onConfigure={(draft) => navigate("/rules/new", draft)}
+            onManage={(id) => navigate("/rules/" + id)}
+            onSettings={() => navigate("/settings")}
+          />
         ) : editing ? (
           <>
             {editID !== "new" && !current ? (
               <div className="notice">
                 {config ? "规则不存在。" : "正在读取规则…"}
-                <button onClick={() => navigate("/")}>返回规则</button>
+                <button onClick={() => navigate("/rules")}>返回规则</button>
               </div>
             ) : (
               <Editor
                 key={editID}
-                initial={current ? ruleData(current) : blank}
+                initial={current ? ruleData(current) : seed || blank}
                 config={config}
                 catalog={catalog}
                 tail={tail}
-                onBack={() => navigate("/")}
+                backLabel={seed ? "返回服务列表" : "返回发布规则"}
+                onBack={() => navigate(seed ? "/" : "/rules")}
                 onSaved={async () => {
                   await load();
-                  navigate("/");
+                  navigate("/rules");
                 }}
               />
             )}
@@ -443,9 +492,9 @@ function App() {
                   <br />
                   只有你明确启用的规则才会发布。
                 </p>
-                <button onClick={() => navigate("/rules/new")}>
-                  <Plus size={16} />
-                  创建第一条规则
+                <button onClick={() => navigate("/")}>
+                  <Cloud size={16} />
+                  浏览 Zeabur 服务
                 </button>
               </div>
             ) : (
@@ -659,6 +708,7 @@ function Editor({
   tail,
   onBack,
   onSaved,
+  backLabel = "返回发布规则",
 }: {
   initial: Rule;
   config: Config | null;
@@ -666,6 +716,7 @@ function Editor({
   tail: Tail | null;
   onBack: () => void;
   onSaved: () => Promise<void>;
+  backLabel?: string;
 }) {
   const [form, setForm] = useState({ ...initial }),
     [error, setError] = useState(""),
@@ -703,7 +754,7 @@ function Editor({
     <>
       <button className="back text-button" onClick={onBack}>
         <ArrowLeft size={16} />
-        返回发布规则
+        {backLabel}
       </button>
       <div className="page-heading">
         <div>
