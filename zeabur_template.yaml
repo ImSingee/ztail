@@ -1,0 +1,61 @@
+apiVersion: zeabur.com/v1
+kind: Template
+metadata:
+  name: ztail
+spec:
+  description: 手动将 Zeabur / k3s Web 服务通过 Tailscale Services 发布为 HTTPS 地址。
+  tags: [Tool, Networking]
+  variables:
+    - key: ZEABUR_API_KEY
+      type: STRING
+      name: Zeabur API Key
+      description: 从 https://zeabur.com/account/api-keys 获取。
+    - key: ZEABUR_SERVER_ID
+      type: STRING
+      name: Zeabur Server ID
+      description: 必填，server- 开头；ztail 必须部署在该 Dedicated Server 上。
+    - key: DOMAIN
+      type: DOMAIN
+      name: 管理面板域名
+      description: 用于访问密码保护的管理面板。
+  readme: |-
+    # ztail
+    登录管理面板后，通过交互式授权或 Auth Key 加入 tailnet，再手动发布规则。
+    ADMIN_PASSWORD 在部署时随机生成，见服务的使用说明。
+    节点 tag 名称由 TAILSCALE_TAG 配置，默认 ztail，程序自动添加 tag:。
+    默认绑定 Tailscale 控制台已定义的 Service。需要从面板创建 Service 时，额外设置可选的 TAILSCALE_API_KEY 环境变量。
+    请开启 MagicDNS 与 HTTPS，并按面板提供的示例配置 tag、主机自动审批和访问授权。
+    /data 持久化配置和节点身份。不要删除或共享节点状态卷。
+  services:
+    - name: ztail
+      template: PREBUILT
+      domainKey: DOMAIN
+      spec:
+        source:
+          image: ghcr.io/imsingee/ztail:latest
+        ports:
+          - id: web
+            port: 8080
+            type: HTTP
+        volumes:
+          - id: data
+            dir: /data
+        env:
+          ADMIN_PASSWORD:
+            default: ${PASSWORD}
+          TAILSCALE_TAG:
+            default: ztail
+          DATA_DIR:
+            default: /data
+          PORT:
+            default: '8080'
+          CLUSTER_DOMAIN:
+            default: cluster.local
+        instructions:
+          - type: TEXT
+            title: 管理面板
+            content: https://${DOMAIN}
+          - type: PASSWORD
+            title: 管理员密码
+            content: ${ADMIN_PASSWORD}
+            category: Credentials

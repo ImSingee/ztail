@@ -1,0 +1,1172 @@
+import React, { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Check,
+  Copy,
+  Globe,
+  Layers3,
+  LoaderCircle,
+  LogOut,
+  Plus,
+  RefreshCw,
+  Settings2,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
+import "./style.css";
+
+type Named = { _id: string; name: string };
+type Project = Named & {
+  environments: Named[];
+  services: (Named & { dnsName: string })[];
+};
+type Catalog = {
+  server: Named;
+  projects: Project[];
+  updatedAt: string;
+  error: string;
+};
+type Tail = {
+  state: string;
+  authUrl: string;
+  tailnet: string;
+  dnsSuffix: string;
+  hostname: string;
+  nodeId: string;
+  tags: string[];
+  ips: string[];
+  magicDns: boolean;
+  https: boolean;
+  error: string;
+};
+type Rule = {
+  id: string;
+  name: string;
+  source: "manual" | "zeabur";
+  projectId: string;
+  environmentId: string;
+  serviceId: string;
+  host: string;
+  protocol: "http" | "https";
+  port: number;
+  enabled: boolean;
+  createService: boolean;
+  revision: number;
+  updatedAt: string;
+};
+type RuleView = Rule & {
+  target: string;
+  status: {
+    state: string;
+    error: string;
+    url: string;
+    backend: string;
+    approval: string;
+    appliedRevision: number;
+    activeUrl: string;
+    activeTarget: string;
+  };
+};
+type Config = {
+  serverId: string;
+  nodeTag: string;
+  serviceTag: string;
+  clusterDomain: string;
+  apiKeyConfigured: boolean;
+  policy: unknown;
+  withdrawalErrors: string[];
+};
+type Session = { authenticated: boolean; csrfToken: string; version?: string };
+let csrf = "";
+async function api<T>(
+  path: string,
+  method = "GET",
+  body?: unknown,
+): Promise<T> {
+  const res = await fetch("/api" + path, {
+    method,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    if (res.status === 401 && path !== "/session")
+      window.dispatchEvent(new Event("session-expired"));
+    throw new Error(data.error || `请求失败 (${res.status})`);
+  }
+  return data;
+}
+function ruleData(r: Rule): Rule {
+  return {
+    id: r.id,
+    name: r.name,
+    source: r.source,
+    projectId: r.projectId,
+    environmentId: r.environmentId,
+    serviceId: r.serviceId,
+    host: r.host,
+    protocol: r.protocol,
+    port: r.port,
+    enabled: r.enabled,
+    createService: r.createService,
+    revision: r.revision,
+    updatedAt: r.updatedAt,
+  };
+}
+const blank: Rule = {
+  id: "",
+  name: "",
+  source: "zeabur",
+  projectId: "",
+  environmentId: "",
+  serviceId: "",
+  host: "",
+  protocol: "http",
+  port: 80,
+  enabled: false,
+  createService: false,
+  revision: 0,
+  updatedAt: "",
+};
+const states: Record<string, string> = {
+  draft: "草稿 / 已停用",
+  advertised: "已广告",
+  error: "发布失败",
+  update_failed: "更新失败 · 旧配置运行中",
+  withdrawal_pending: "撤回待重试",
+};
+function ErrorBox({ message }: { message: string }) {
+  return message ? (
+    <div className="notice error" role="alert">
+      {message}
+    </div>
+  ) : null;
+}
+function Busy() {
+  return <LoaderCircle size={16} className="spin" aria-label="处理中" />;
+}
+function CopyButton({ value }: { value: string }) {
+  const [copied, set] = useState(false);
+  return (
+    <button
+      className="icon-button"
+      title="复制地址"
+      aria-label="复制地址"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          set(true);
+          setTimeout(() => set(false), 1600);
+        } catch {
+          window.prompt("复制此地址", value);
+        }
+      }}
+    >
+      {copied ? <Check size={16} /> : <Copy size={16} />}
+    </button>
+  );
+}
+function Login({ onLogin }: { onLogin: (s: Session) => void }) {
+  const [password, set] = useState(""),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false);
+  return (
+    <main className="login">
+      <div className="login-form">
+        <div className="brand">
+          <span className="brand-mark">
+            <Layers3 size={21} />
+          </span>
+          ztail
+        </div>
+        <h1>登录服务发布面板</h1>
+        <p className="muted">管理集群内的服务，连接你的 tailnet。</p>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setBusy(true);
+            setError("");
+            try {
+              const s = await api<Session>("/session", "POST", { password });
+              csrf = s.csrfToken;
+              set("");
+              onLogin(s);
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <label htmlFor="password">管理员密码</label>
+          <input
+            id="password"
+            type="password"
+            value={password}
+            autoComplete="current-password"
+            required
+            autoFocus
+            onChange={(e) => set(e.target.value)}
+          />
+          <ErrorBox message={error} />
+          <button className="primary full" disabled={busy}>
+            {busy ? <Busy /> : <ShieldCheck size={17} />}登录
+          </button>
+        </form>
+        <p className="footnote">使用部署时配置的 ADMIN_PASSWORD。</p>
+      </div>
+    </main>
+  );
+}
+function App() {
+  const [session, setSession] = useState<Session | null>(null),
+    [initial, setInitial] = useState(true),
+    [path, setPath] = useState(location.pathname),
+    [rules, setRules] = useState<RuleView[]>([]),
+    [catalog, setCatalog] = useState<Catalog | null>(null),
+    [tail, setTail] = useState<Tail | null>(null),
+    [config, setConfig] = useState<Config | null>(null),
+    [error, setError] = useState(""),
+    [loadError, setLoadError] = useState(""),
+    [busy, setBusy] = useState(false),
+    [deleting, setDeleting] = useState<RuleView | null>(null);
+  const navigate = (p: string) => {
+    history.pushState({}, "", p);
+    setPath(p);
+    setError("");
+    window.scrollTo(0, 0);
+  };
+  const load = async () => {
+    try {
+      const [r, c, t, s] = await Promise.all([
+        api<RuleView[]>("/rules"),
+        api<Catalog>("/catalog"),
+        api<Tail>("/tailscale"),
+        api<Config>("/settings"),
+      ]);
+      setRules(r);
+      setCatalog(c);
+      setTail(t);
+      setConfig(s);
+      setLoadError("");
+    } catch (e) {
+      setLoadError((e as Error).message);
+    }
+  };
+  useEffect(() => {
+    api<Session>("/session")
+      .then((s) => {
+        csrf = s.csrfToken;
+        setSession(s);
+      })
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setInitial(false));
+    const pop = () => setPath(location.pathname),
+      expired = () => {
+        csrf = "";
+        setSession(null);
+      };
+    addEventListener("popstate", pop);
+    addEventListener("session-expired", expired);
+    return () => {
+      removeEventListener("popstate", pop);
+      removeEventListener("session-expired", expired);
+    };
+  }, []);
+  useEffect(() => {
+    if (!session?.authenticated) return;
+    void load();
+    const timer = setInterval(() => void load(), 3000);
+    return () => clearInterval(timer);
+  }, [session?.authenticated]);
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (initial)
+    return (
+      <main className="loading">
+        <Busy />
+        正在读取会话…
+        <ErrorBox message={error} />
+      </main>
+    );
+  if (!session?.authenticated) return <Login onLogin={setSession} />;
+  const editing = path.startsWith("/rules/"),
+    settings = path === "/settings",
+    editID = path.split("/")[2],
+    current = rules.find((r) => r.id === editID);
+  return (
+    <>
+      <header className="topbar">
+        <a
+          href="/"
+          className="brand"
+          onClick={(e) => {
+            e.preventDefault();
+            navigate("/");
+          }}
+        >
+          <span className="brand-mark">
+            <Layers3 size={20} />
+          </span>
+          ztail
+        </a>
+        <nav aria-label="主导航">
+          <a
+            className={!settings ? "active" : ""}
+            href="/"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("/");
+            }}
+          >
+            <Globe size={16} />
+            发布规则
+          </a>
+          <a
+            className={settings ? "active" : ""}
+            href="/settings"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("/settings");
+            }}
+          >
+            <Settings2 size={16} />
+            连接设置
+          </a>
+        </nav>
+        <button
+          className="icon-button logout"
+          aria-label="退出管理面板"
+          title="退出管理面板"
+          onClick={() =>
+            void act(async () => {
+              await api("/session", "DELETE");
+              csrf = "";
+              setSession(null);
+            })
+          }
+        >
+          <LogOut size={17} />
+        </button>
+      </header>
+      <main className="workspace">
+        <ErrorBox message={error} />
+        <ErrorBox message={loadError} />
+        {settings ? (
+          <Connection
+            config={config}
+            tail={tail}
+            catalog={catalog}
+            onUpdate={load}
+          />
+        ) : editing ? (
+          <>
+            {editID !== "new" && !current ? (
+              <div className="notice">
+                {config ? "规则不存在。" : "正在读取规则…"}
+                <button onClick={() => navigate("/")}>返回规则</button>
+              </div>
+            ) : (
+              <Editor
+                key={editID}
+                initial={current ? ruleData(current) : blank}
+                config={config}
+                catalog={catalog}
+                tail={tail}
+                onBack={() => navigate("/")}
+                onSaved={async () => {
+                  await load();
+                  navigate("/");
+                }}
+              />
+            )}
+          </>
+        ) : (
+          <>
+            <div className="page-heading">
+              <div>
+                <h1>发布规则</h1>
+                <p className="muted">
+                  选择后端服务，以独立的 HTTPS 名称发布到 tailnet。
+                </p>
+              </div>
+              <button
+                className="primary"
+                onClick={() => navigate("/rules/new")}
+              >
+                <Plus size={17} />
+                新增规则
+              </button>
+            </div>
+            <div className="connection-strip">
+              <span>
+                <span
+                  className={
+                    "dot " + (tail?.state === "Running" ? "green" : "amber")
+                  }
+                />
+                {tail?.state === "Running" ? tail.tailnet : "Tailscale 未连接"}
+              </span>
+              <span className="mono">{config?.nodeTag || "…"}</span>
+              <button
+                className="text-button"
+                onClick={() => navigate("/settings")}
+              >
+                {tail?.state === "Running" ? "连接设置" : "完成节点接入"}
+                <ArrowUpRight size={14} />
+              </button>
+            </div>
+            {!config ? (
+              <div className="loading-inline">
+                <Busy />
+                正在读取规则…
+              </div>
+            ) : rules.length === 0 ? (
+              <div className="empty">
+                <Globe size={34} />
+                <h2>还没有发布规则</h2>
+                <p>
+                  从 Zeabur 服务列表选择后端，或手填集群地址。
+                  <br />
+                  只有你明确启用的规则才会发布。
+                </p>
+                <button onClick={() => navigate("/rules/new")}>
+                  <Plus size={16} />
+                  创建第一条规则
+                </button>
+              </div>
+            ) : (
+              <div className="rule-table">
+                <div className="table-head">
+                  <span>名称 / 访问地址</span>
+                  <span>后端服务</span>
+                  <span>发布状态</span>
+                  <span>操作</span>
+                </div>
+                {rules.map((r) => (
+                  <article className="rule-row" key={r.id}>
+                    <div>
+                      <a
+                        className="rule-name"
+                        href={"/rules/" + r.id}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          navigate("/rules/" + r.id);
+                        }}
+                      >
+                        {r.name}
+                      </a>
+                      <div className="url-line">
+                        <span className="mono">
+                          {r.status.url || "加入 tailnet 后生成访问地址"}
+                        </span>
+                        {r.status.url && (
+                          <>
+                            <CopyButton value={r.status.url} />
+                            <a
+                              className="icon-button"
+                              href={r.status.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label={"访问 " + r.name}
+                            >
+                              <ArrowUpRight size={16} />
+                            </a>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="source-label">
+                        {r.source === "zeabur" ? "Zeabur" : "手填地址"}
+                      </span>
+                      <div className="mono target">{r.target}</div>
+                      <span
+                        className={
+                          "backend " +
+                          (r.status.backend === "unreachable" ? "bad" : "")
+                        }
+                      >
+                        {r.status.backend === "reachable"
+                          ? "后端可达"
+                          : r.status.backend === "unreachable"
+                            ? "后端不可达"
+                            : "尚未检测"}
+                      </span>
+                    </div>
+                    <div>
+                      <span
+                        className={
+                          "badge " +
+                          (r.status.state === "advertised"
+                            ? "success"
+                            : r.status.error
+                              ? "danger"
+                              : "neutral")
+                        }
+                      >
+                        {states[r.status.state] || "等待应用"}
+                      </span>
+                      {r.status.state === "advertised" && (
+                        <div className="status-note">
+                          审批状态未知 · 以控制台为准
+                        </div>
+                      )}
+                      {r.status.error && (
+                        <>
+                          <div className="row-error">{r.status.error}</div>
+                          {r.status.activeUrl && (
+                            <div className="status-note mono target">
+                              当前入口：{r.status.activeUrl}
+                              <br />
+                              当前后端：{r.status.activeTarget}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <div className="row-actions">
+                      <button
+                        disabled={busy}
+                        onClick={() =>
+                          void act(() =>
+                            api("/rules/" + r.id, "PUT", {
+                              ...ruleData(r),
+                              enabled: !r.enabled,
+                            }),
+                          )
+                        }
+                      >
+                        {r.enabled ? "停用" : "发布"}
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() => navigate("/rules/" + r.id)}
+                      >
+                        编辑
+                      </button>
+                      {r.status.error && (
+                        <button
+                          disabled={busy}
+                          aria-label={"重试 " + r.name}
+                          onClick={() =>
+                            void act(() =>
+                              api("/rules/" + r.id + "/retry", "POST", {}),
+                            )
+                          }
+                        >
+                          <RefreshCw size={14} />
+                        </button>
+                      )}
+                      <button
+                        disabled={busy}
+                        className="icon-button"
+                        aria-label={"删除 " + r.name}
+                        onClick={() => setDeleting(r)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+            <p className="footnote">
+              已广告表示本节点已配置并声明承载该 Service。访问仍受 tailnet
+              审批与授权策略控制。
+            </p>
+          </>
+        )}
+      </main>
+      <footer>
+        ztail <span className="mono">{session.version || "dev"}</span>
+        <span>手动配置，明确发布</span>
+      </footer>
+      {deleting && (
+        <div className="modal-backdrop">
+          <section
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-title"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setDeleting(null);
+                return;
+              }
+              if (e.key === "Tab") {
+                const buttons = Array.from(
+                  e.currentTarget.querySelectorAll<HTMLButtonElement>(
+                    "button:not(:disabled)",
+                  ),
+                );
+                const first = buttons[0],
+                  last = buttons[buttons.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                  e.preventDefault();
+                  last?.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                  e.preventDefault();
+                  first?.focus();
+                }
+              }
+            }}
+          >
+            <h2 id="delete-title">删除 {deleting.name}？</h2>
+            <p>
+              将删除此规则并撤回本节点广告。Tailscale 中的 Service 定义会保留。
+            </p>
+            <div className="actions">
+              <button autoFocus onClick={() => setDeleting(null)}>
+                取消
+              </button>
+              <button
+                className="destructive"
+                disabled={busy}
+                onClick={() =>
+                  void act(async () => {
+                    await api("/rules/" + deleting.id, "DELETE");
+                    setDeleting(null);
+                  })
+                }
+              >
+                删除规则
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+    </>
+  );
+}
+function Editor({
+  initial,
+  config,
+  catalog,
+  tail,
+  onBack,
+  onSaved,
+}: {
+  initial: Rule;
+  config: Config | null;
+  catalog: Catalog | null;
+  tail: Tail | null;
+  onBack: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [form, setForm] = useState({ ...initial }),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false),
+    [probe, setProbe] = useState(""),
+    [refreshing, setRefreshing] = useState(false),
+    [localCatalog, setLocalCatalog] = useState<Catalog | null>(null);
+  const cat = localCatalog || catalog,
+    project = cat?.projects.find((p) => p._id === form.projectId);
+  const update = <K extends keyof Rule>(key: K, value: Rule[K]) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    setProbe("");
+  };
+  const save = async (enabled: boolean) => {
+    setBusy(true);
+    setError("");
+    try {
+      await api(
+        "/rules" + (form.id ? "/" + form.id : ""),
+        form.id ? "PUT" : "POST",
+        { ...form, enabled },
+      );
+      await onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const target =
+    form.source === "manual"
+      ? `${form.protocol}://${form.host || "<后端地址>"}:${form.port}`
+      : `${form.protocol}://service-${form.serviceId || "<服务 ID>"}.environment-${form.environmentId || "<环境 ID>"}.svc.${config?.clusterDomain || "cluster.local"}:${form.port}`;
+  return (
+    <>
+      <button className="back text-button" onClick={onBack}>
+        <ArrowLeft size={16} />
+        返回发布规则
+      </button>
+      <div className="page-heading">
+        <div>
+          <h1>{form.id ? "编辑发布规则" : "新增发布规则"}</h1>
+          <p className="muted">一个名称对应一个后端。保存草稿不会发布服务。</p>
+        </div>
+      </div>
+      <form
+        className="editor"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save(true);
+        }}
+      >
+        <section className="form-section">
+          <h2>访问名称</h2>
+          <label htmlFor="service-name">Service 名称</label>
+          <input
+            id="service-name"
+            value={form.name}
+            onChange={(e) => update("name", e.target.value)}
+            placeholder="例如 grafana"
+            pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+            maxLength={63}
+            required
+            autoFocus
+          />
+          <p className="help">小写字母、数字和连字符，首尾不能为连字符。</p>
+          <div className="domain-preview">
+            <ShieldCheck size={17} />
+            <span className="mono">
+              https://{form.name || "<名称>"}.
+              {tail?.dnsSuffix || "<tailnet>.ts.net"}
+            </span>
+          </div>
+        </section>
+        <section className="form-section">
+          <div className="section-title">
+            <h2>后端服务</h2>
+            <button
+              type="button"
+              className="text-button"
+              disabled={refreshing}
+              onClick={async () => {
+                setRefreshing(true);
+                try {
+                  setLocalCatalog(
+                    await api<Catalog>("/catalog/refresh", "POST", {}),
+                  );
+                  setError("");
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setRefreshing(false);
+                }
+              }}
+            >
+              {refreshing ? <Busy /> : <RefreshCw size={14} />}刷新目录
+            </button>
+          </div>
+          <div className="segmented" role="group" aria-label="后端来源">
+            <button
+              type="button"
+              aria-pressed={form.source === "zeabur"}
+              onClick={() => update("source", "zeabur")}
+            >
+              Zeabur 服务
+            </button>
+            <button
+              type="button"
+              aria-pressed={form.source === "manual"}
+              onClick={() => update("source", "manual")}
+            >
+              手填地址
+            </button>
+          </div>
+          {form.source === "zeabur" ? (
+            <>
+              <ErrorBox message={cat?.error || ""} />
+              <div className="field">
+                <label htmlFor="project">项目</label>
+                <select
+                  id="project"
+                  value={form.projectId}
+                  required
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      projectId: e.target.value,
+                      environmentId: "",
+                      serviceId: "",
+                    }))
+                  }
+                >
+                  <option value="">选择项目</option>
+                  {cat?.projects.map((p) => (
+                    <option key={p._id} value={p._id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field-grid">
+                <div className="field">
+                  <label htmlFor="environment">环境</label>
+                  <select
+                    id="environment"
+                    value={form.environmentId}
+                    disabled={!project}
+                    required
+                    onChange={(e) => update("environmentId", e.target.value)}
+                  >
+                    <option value="">选择环境</option>
+                    {project?.environments.map((e) => (
+                      <option key={e._id} value={e._id}>
+                        {e.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="service">服务</label>
+                  <select
+                    id="service"
+                    value={form.serviceId}
+                    disabled={!project}
+                    required
+                    onChange={(e) => update("serviceId", e.target.value)}
+                  >
+                    <option value="">选择服务</option>
+                    {project?.services.map((s) => (
+                      <option key={s._id} value={s._id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <p className="help">
+                服务需实际部署在所选环境中。发布前可检测后端连通性。
+              </p>
+            </>
+          ) : (
+            <div className="field">
+              <label htmlFor="backend-host">后端主机名或 IP</label>
+              <input
+                id="backend-host"
+                value={form.host}
+                required
+                placeholder="grafana.monitoring.svc.cluster.local"
+                onChange={(e) => update("host", e.target.value)}
+              />
+              <p className="help">只填地址，协议和端口单独设置。</p>
+            </div>
+          )}
+          <div className="field-grid">
+            <div className="field">
+              <label htmlFor="protocol">后端协议</label>
+              <select
+                id="protocol"
+                value={form.protocol}
+                onChange={(e) =>
+                  update("protocol", e.target.value as Rule["protocol"])
+                }
+              >
+                <option value="http">HTTP</option>
+                <option value="https">HTTPS（验证证书）</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="port">后端端口</label>
+              <input
+                id="port"
+                type="number"
+                min={1}
+                max={65535}
+                value={form.port}
+                required
+                onChange={(e) => update("port", Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <div className="target-preview mono">{target}</div>
+          <div className="probe-line">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setProbe("");
+                setError("");
+                try {
+                  const res = await api<{ state: string }>(
+                    "/probe",
+                    "POST",
+                    form,
+                  );
+                  setProbe(
+                    res.state === "reachable" ? "后端可达" : "后端不可达",
+                  );
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              测试后端连接
+            </button>
+            {probe && (
+              <span className="backend">
+                <Check size={14} />
+                {probe}
+              </span>
+            )}
+          </div>
+        </section>
+        <section className="form-section">
+          <h2>Tailscale Service</h2>
+          {config?.apiKeyConfigured ? (
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={form.createService}
+                onChange={(e) => update("createService", e.target.checked)}
+              />
+              名称尚未定义时，通过 API 创建 Service
+            </label>
+          ) : (
+            <p className="help">
+              未配置 TAILSCALE_API_KEY。请先在 Tailscale 控制台定义{" "}
+              <code>svc:{form.name || "<名称>"}</code>，端口为{" "}
+              <code>tcp:443</code>，再发布此规则。
+            </p>
+          )}
+          <p className="help">
+            主机审批和访问授权遵循 tailnet 策略。已有 Service 定义不会被覆盖。
+          </p>
+        </section>
+        <ErrorBox message={error} />
+        <div className="editor-actions">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void save(false)}
+          >
+            保存草稿{initial.enabled ? "并停用" : ""}
+          </button>
+          <button type="submit" className="primary" disabled={busy}>
+            {busy ? <Busy /> : <Globe size={16} />}保存并发布
+          </button>
+        </div>
+      </form>
+    </>
+  );
+}
+function Connection({
+  config,
+  tail,
+  catalog,
+  onUpdate,
+}: {
+  config: Config | null;
+  tail: Tail | null;
+  catalog: Catalog | null;
+  onUpdate: () => Promise<void>;
+}) {
+  const [key, setKey] = useState(""),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false);
+  const connect = async (method: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      await api("/tailscale/connect", "POST", {
+        method,
+        authKey: method === "authkey" ? key : "",
+      });
+      setKey("");
+      await onUpdate();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <h1>连接设置</h1>
+          <p className="muted">
+            确认服务器与节点接入，查看 Service 发布所需的策略。
+          </p>
+        </div>
+        <button onClick={() => void onUpdate()}>
+          <RefreshCw size={15} />
+          刷新状态
+        </button>
+      </div>
+      <div className="settings-grid">
+        <section className="settings-section">
+          <h2>Zeabur 服务器</h2>
+          <dl>
+            <dt>服务器</dt>
+            <dd>{catalog?.server.name || "等待目录同步"}</dd>
+            <dt>Server ID</dt>
+            <dd className="mono">{config?.serverId}</dd>
+            <dt>集群 DNS 后缀</dt>
+            <dd className="mono">{config?.clusterDomain}</dd>
+            <dt>目录更新时间</dt>
+            <dd>
+              {catalog?.updatedAt
+                ? new Date(catalog.updatedAt).toLocaleString()
+                : "尚未同步"}
+            </dd>
+          </dl>
+          <ErrorBox message={catalog?.error || ""} />
+          <ErrorBox message={config?.withdrawalErrors?.join("；") || ""} />
+          <p className="help">
+            通过 ZEABUR_SERVER_ID 固定服务器，API Key 由环境变量提供。
+          </p>
+        </section>
+        <section className="settings-section">
+          <h2>Tailscale 节点</h2>
+          <dl>
+            <dt>连接状态</dt>
+            <dd>
+              <span
+                className={
+                  "badge " + (tail?.state === "Running" ? "success" : "neutral")
+                }
+              >
+                {tail?.state === "Running"
+                  ? "已连接"
+                  : tail?.state === "NeedsMachineAuth"
+                    ? "等待节点审批"
+                    : tail?.state === "NeedsLogin"
+                      ? "等待授权"
+                      : tail?.state || "读取中"}
+              </span>
+            </dd>
+            <dt>Tailnet</dt>
+            <dd>{tail?.tailnet || "—"}</dd>
+            <dt>节点</dt>
+            <dd>{tail?.hostname || "ztail"}</dd>
+            <dt>配置的 tag</dt>
+            <dd className="mono">{config?.nodeTag}</dd>
+            <dt>实际 tag</dt>
+            <dd className="mono">{tail?.tags?.join(", ") || "尚未获得 tag"}</dd>
+            <dt>MagicDNS / HTTPS</dt>
+            <dd>
+              {tail?.magicDns ? "已开启" : "未确认"} /{" "}
+              {tail?.https ? "已开启" : "未确认"}
+            </dd>
+            <dt>API Key</dt>
+            <dd>
+              {config?.apiKeyConfigured
+                ? "已配置 · 发布时校验权限"
+                : "未配置 · 绑定已有 Service"}
+            </dd>
+          </dl>
+          <ErrorBox message={tail?.error || ""} />
+          <ErrorBox message={error} />
+          {tail?.state === "NeedsMachineAuth" && (
+            <div className="notice">
+              节点已接入，等待管理员审批。
+              <a
+                href="https://login.tailscale.com/admin/machines"
+                target="_blank"
+                rel="noreferrer"
+              >
+                打开节点管理
+              </a>
+            </div>
+          )}
+          {tail?.state !== "Running" && tail?.state !== "NeedsMachineAuth" && (
+            <div className="auth-controls">
+              <button
+                className="primary"
+                disabled={busy}
+                onClick={() => void connect("interactive")}
+              >
+                {busy ? <Busy /> : <ArrowUpRight size={16} />}交互式授权
+              </button>
+              {tail?.authUrl && (
+                <a
+                  className="authorization-link"
+                  href={tail.authUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  打开 Tailscale 授权页面
+                  <ArrowUpRight size={15} />
+                </a>
+              )}
+              <p className="help">
+                授权完成后会自动更新状态。授权账号需要有权分配配置的 tag。
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void connect("authkey");
+                }}
+              >
+                <label htmlFor="auth-key">或使用 Auth Key</label>
+                <input
+                  id="auth-key"
+                  type="password"
+                  autoComplete="off"
+                  value={key}
+                  placeholder="tskey-auth-…"
+                  required
+                  onChange={(e) => setKey(e.target.value)}
+                />
+                <button disabled={busy}>使用 Auth Key 加入</button>
+              </form>
+            </div>
+          )}
+        </section>
+      </div>
+      <section className="policy-section">
+        <h2>一次配置，后续手动发布</h2>
+        <p>
+          在 Tailscale 控制台开启 MagicDNS 和 HTTPS。为 Service 设置{" "}
+          <code>{config?.serviceTag}</code>
+          ，将以下规则合并到已有策略；访问来源可按你的团队需求调整。
+        </p>
+        <pre>
+          {config
+            ? JSON.stringify(config.policy, null, 2)
+            : "正在读取策略示例…"}
+        </pre>
+        <div className="actions">
+          <button
+            onClick={() =>
+              void navigator.clipboard.writeText(
+                JSON.stringify(config?.policy, null, 2),
+              )
+            }
+          >
+            <Copy size={15} />
+            复制策略示例
+          </button>
+          <a
+            href="https://login.tailscale.com/admin/services"
+            target="_blank"
+            rel="noreferrer"
+          >
+            打开 Tailscale Services
+            <ArrowUpRight size={15} />
+          </a>
+        </div>
+        <p className="help">
+          ztail 不修改全局策略。API Key 只用于 Service
+          定义；节点授权由上方接入流程完成。
+        </p>
+      </section>
+    </>
+  );
+}
+createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);

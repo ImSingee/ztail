@@ -1,0 +1,12 @@
+.git
+.acceptances
+.playwright-cli
+web/node_modules
+web/dist
+test-results
+playwright-report
+data
+ztail
+.env
+*.log
+*.tsbuildinfo

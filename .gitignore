@@ -1,0 +1,11 @@
+node_modules/
+web/dist/
+data/
+/ztail
+.env
+.acceptances/
+test-results/
+playwright-report/
+.playwright-cli/
+*.log
+*.tsbuildinfo

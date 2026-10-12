@@ -1,0 +1,93 @@
+# Create the namespace and secret first; do not commit live credentials.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ztail
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ztail-data
+  namespace: ztail
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ztail
+  namespace: ztail
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ztail
+  template:
+    metadata:
+      labels:
+        app: ztail
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: ztail
+          image: ghcr.io/imsingee/ztail:latest
+          ports:
+            - name: web
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: ztail-config
+          env:
+            - name: TAILSCALE_TAG
+              value: ztail
+            - name: DATA_DIR
+              value: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: web
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: web
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ztail-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ztail
+  namespace: ztail
+spec:
+  selector:
+    app: ztail
+  ports:
+    - name: web
+      port: 8080
+      targetPort: web
