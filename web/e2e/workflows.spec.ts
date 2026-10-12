@@ -129,35 +129,33 @@ test("Zeabur selection keeps second environment, drafts never advertise and refr
   await capture(page, "catalog-error-retained");
   writeFileSync(`${assets}/catalog-audit.json`, JSON.stringify(state, null, 2));
 });
-test("interactive and Auth Key are page flows; custom tag and policy stay visible", async ({
+test("interactive opens authorization tab; custom tag and policy stay visible", async ({
   page,
   request,
 }) => {
   await login(page);
   await page.getByRole("link", { name: "连接设置", exact: true }).click();
-  await page.getByRole("button", { name: "交互式授权" }).click();
-  await expect(
-    page.getByRole("link", { name: "打开 Tailscale 授权页面" }),
-  ).toBeVisible();
-  await capture(page, "interactive-authorization");
-  let state = await audit(request);
+  await page
+    .getByRole("checkbox", {
+      name: "我已将策略片段合并到现有策略，并在 Tailscale 保存",
+    })
+    .check();
+  const [popup] = await Promise.all([
+    page.waitForEvent("popup"),
+    page.getByRole("button", { name: "交互式授权" }).click(),
+  ]);
+  await popup.waitForURL("**/fixture/authorize");
+  const state = await audit(request);
   expect(state.connects[0]).toEqual({
     method: "interactive",
     authKeyPresent: false,
   });
-  await page.getByLabel("或使用 Auth Key").fill("fixture-auth-key");
-  await page.getByRole("button", { name: "使用 Auth Key 加入" }).click();
-  await expect(page.getByLabel("或使用 Auth Key")).toHaveValue("");
-  state = await audit(request);
-  expect(state.connects[1]).toEqual({
-    method: "authkey",
-    authKeyPresent: true,
-  });
-  await request.get("/fixture/authorize");
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "交互式授权" })).toHaveCount(0);
+  await page.getByText("查看需要合并的策略片段", { exact: true }).click();
   await expect(page.locator("pre")).toContainText("tag:custom-host");
   await capture(page, "connected-settings");
+  await popup.close();
   writeFileSync(
     `${assets}/authorization-audit.json`,
     JSON.stringify(state, null, 2),

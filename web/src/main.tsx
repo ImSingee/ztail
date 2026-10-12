@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
@@ -100,10 +100,12 @@ async function api<T>(
   path: string,
   method = "GET",
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const res = await fetch("/api" + path, {
     method,
     credentials: "same-origin",
+    signal,
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -1050,30 +1052,141 @@ function Connection({
 }) {
   const [key, setKey] = useState(""),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [busyMethod, setBusyMethod] = useState(""),
+    [policyReady, setPolicyReady] = useState(false),
+    [authorizationUrl, setAuthorizationUrl] = useState(""),
+    [hasInteractiveAttempt, setHasInteractiveAttempt] = useState(false),
+    [openNotice, setOpenNotice] = useState(""),
+    [copiedPolicy, setCopiedPolicy] = useState(false);
+  const pending = useRef<{
+    controller: AbortController;
+    tab: Window | null;
+  } | null>(null);
+  useEffect(
+    () => () => {
+      pending.current?.controller.abort();
+      pending.current?.tab?.close();
+    },
+    [],
+  );
   const connect = async (method: string) => {
+    if (!policyReady || pending.current) return;
+    const controller = new AbortController();
+    let tab: Window | null = null;
+    // Reserve a tab in the click handler before user activation expires.
+    // After asynchronous login supplies its URL, navigate this owned tab.
+    if (method === "interactive") {
+      try {
+        tab = window.open("about:blank", "_blank");
+        if (tab) {
+          tab.opener = null;
+          tab.document.title = "正在准备 Tailscale 授权";
+          tab.document.body.textContent =
+            "正在获取 Tailscale 授权链接，请稍候。你可以回到 ztail 查看进度。";
+        }
+      } catch {
+        tab?.close();
+        tab = null;
+      }
+    }
+    pending.current = { controller, tab };
     setBusy(true);
+    setBusyMethod(method);
     setError("");
+    setOpenNotice("");
+    setAuthorizationUrl("");
+    setHasInteractiveAttempt(method === "interactive");
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 90_000);
     try {
-      await api("/tailscale/connect", "POST", {
-        method,
-        authKey: method === "authkey" ? key : "",
-      });
+      await api(
+        "/tailscale/connect",
+        "POST",
+        {
+          method,
+          authKey: method === "authkey" ? key : "",
+        },
+        controller.signal,
+      );
       setKey("");
-      await onUpdate();
+      if (method === "interactive") {
+        for (;;) {
+          const status = await api<Tail>(
+            "/tailscale",
+            "GET",
+            undefined,
+            controller.signal,
+          );
+          if (
+            status.state === "Running" ||
+            status.state === "NeedsMachineAuth"
+          ) {
+            tab?.close();
+            break;
+          }
+          if (status.error) throw new Error(status.error);
+          if (status.authUrl) {
+            const url = new URL(status.authUrl);
+            if (url.protocol !== "https:" && url.protocol !== "http:")
+              throw new Error("Tailscale 返回了无效的授权链接，请重试");
+            setAuthorizationUrl(url.href);
+            if (tab && !tab.closed) {
+              tab.location.replace(url.href);
+              // Completed tabs belong to the user; cleanup must not close them.
+              pending.current!.tab = null;
+            } else {
+              setOpenNotice(
+                "授权链接已准备好。浏览器阻止了新标签页或等待页已关闭，请点击下方链接打开。",
+              );
+            }
+            break;
+          }
+          await new Promise<void>((resolve, reject) => {
+            const abort = () => {
+              window.clearTimeout(timer);
+              reject(new DOMException("Aborted", "AbortError"));
+            };
+            const timer = window.setTimeout(() => {
+              controller.signal.removeEventListener("abort", abort);
+              resolve();
+            }, 1000);
+            controller.signal.addEventListener("abort", abort, { once: true });
+            if (controller.signal.aborted) {
+              controller.signal.removeEventListener("abort", abort);
+              abort();
+            }
+          });
+        }
+      }
+      if (!controller.signal.aborted) await onUpdate();
     } catch (e) {
-      setError((e as Error).message);
+      tab?.close();
+      if (timedOut)
+        setError("等待授权链接超过 90 秒，请检查 Tailscale 网络连接后重试。");
+      else if (!controller.signal.aborted) setError((e as Error).message);
     } finally {
-      setBusy(false);
+      window.clearTimeout(timeout);
+      if (pending.current?.controller === controller) pending.current = null;
+      if (!controller.signal.aborted || timedOut) {
+        setBusy(false);
+        setBusyMethod("");
+      }
     }
   };
+  const visibleAuthUrl =
+    authorizationUrl || (!hasInteractiveAttempt ? tail?.authUrl : "");
+
   return (
     <>
       <div className="page-heading">
         <div>
           <h1>连接设置</h1>
           <p className="muted">
-            确认服务器与节点接入，查看 Service 发布所需的策略。
+            先合并并保存访问策略，再授权节点加入 tailnet。
           </p>
         </div>
         <button onClick={() => void onUpdate()}>
@@ -1081,31 +1194,98 @@ function Connection({
           刷新状态
         </button>
       </div>
+      <section
+        className="policy-section setup-policy"
+        aria-labelledby="policy-heading"
+      >
+        <h2 id="policy-heading">
+          <span className="setup-step">1</span>先配置 Tailscale 策略
+        </h2>
+        <p>
+          节点授权会申请 <code>{config?.nodeTag}</code>。请先在 Tailscale 中定义
+          tag 和权限，再进行下方授权。
+        </p>
+        <div className="notice policy-merge-notice">
+          <strong>这是策略片段：合并到现有策略，勿覆盖整份策略。</strong>
+          <p>
+            保留现有配置：将 <code>tagOwners</code> 和{" "}
+            <code>autoApprovers.services</code> 中的条目合并到对应字段，将{" "}
+            <code>grants</code> 条目追加到现有数组。
+          </p>
+        </div>
+        <ol className="policy-instructions">
+          <li>打开访问策略，将下方片段合并到已有配置，并保存。</li>
+          <li>
+            访问来源可按团队需求调整。保留配置的节点 tag 和 Service tag 权限。
+          </li>
+          <li>
+            在 DNS 设置中开启 MagicDNS 和 HTTPS，供后续 Service 发布使用。
+          </li>
+        </ol>
+        <div className="actions">
+          <a
+            className="button-link primary"
+            href="https://login.tailscale.com/admin/acls"
+            target="_blank"
+            rel="noreferrer"
+          >
+            打开 Tailscale 访问策略
+            <ArrowUpRight size={15} />
+          </a>
+          <button
+            disabled={!config}
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(
+                  JSON.stringify(config?.policy, null, 2),
+                );
+                setCopiedPolicy(true);
+              } catch {
+                setError("无法复制策略片段，请展开下方内容手动复制。");
+              }
+            }}
+          >
+            <Copy size={15} />
+            {copiedPolicy ? "已复制策略片段" : "复制待合并的策略片段"}
+          </button>
+          <a
+            href="https://login.tailscale.com/admin/dns"
+            target="_blank"
+            rel="noreferrer"
+          >
+            DNS 设置
+            <ArrowUpRight size={15} />
+          </a>
+        </div>
+        <details className="policy-preview">
+          <summary>查看需要合并的策略片段</summary>
+          <p className="help">只合并以下条目，保留现有的其他策略。</p>
+          <pre>
+            {config
+              ? JSON.stringify(config.policy, null, 2)
+              : "正在读取策略片段…"}
+          </pre>
+        </details>
+        {tail?.state !== "Running" && tail?.state !== "NeedsMachineAuth" && (
+          <label className="policy-confirm">
+            <input
+              type="checkbox"
+              checked={policyReady}
+              disabled={!config || busy}
+              onChange={(e) => setPolicyReady(e.target.checked)}
+            />
+            <span>我已将策略片段合并到现有策略，并在 Tailscale 保存</span>
+          </label>
+        )}
+        <p className="help">
+          策略由你在 Tailscale 中保存，ztail 不会替你修改。
+        </p>
+      </section>
       <div className="settings-grid">
         <section className="settings-section">
-          <h2>Zeabur 服务器</h2>
-          <dl>
-            <dt>服务器</dt>
-            <dd>{catalog?.server.name || "等待目录同步"}</dd>
-            <dt>Server ID</dt>
-            <dd className="mono">{config?.serverId}</dd>
-            <dt>集群 DNS 后缀</dt>
-            <dd className="mono">{config?.clusterDomain}</dd>
-            <dt>目录更新时间</dt>
-            <dd>
-              {catalog?.updatedAt
-                ? new Date(catalog.updatedAt).toLocaleString()
-                : "尚未同步"}
-            </dd>
-          </dl>
-          <ErrorBox message={catalog?.error || ""} />
-          <ErrorBox message={config?.withdrawalErrors?.join("；") || ""} />
-          <p className="help">
-            通过 ZEABUR_SERVER_ID 固定服务器，API Key 由环境变量提供。
-          </p>
-        </section>
-        <section className="settings-section">
-          <h2>Tailscale 节点</h2>
+          <h2>
+            <span className="setup-step">2</span>授权 Tailscale 节点
+          </h2>
           <dl>
             <dt>连接状态</dt>
             <dd>
@@ -1179,27 +1359,47 @@ function Connection({
           )}
           {tail?.state !== "Running" && tail?.state !== "NeedsMachineAuth" && (
             <div className="auth-controls">
+              {!policyReady && (
+                <p className="auth-prerequisite">
+                  请先完成上方策略配置并勾选确认，再开始授权。
+                </p>
+              )}
               <button
                 className="primary"
-                disabled={busy}
+                disabled={!policyReady || busy || !config}
+                aria-busy={busyMethod === "interactive"}
                 onClick={() => void connect("interactive")}
               >
-                {busy ? <Busy /> : <ArrowUpRight size={16} />}交互式授权
+                {busyMethod === "interactive" ? (
+                  <Busy />
+                ) : (
+                  <ArrowUpRight size={16} />
+                )}
+                {busyMethod === "interactive"
+                  ? "正在获取授权链接…"
+                  : "交互式授权"}
               </button>
-              {tail?.authUrl &&
-                !tail.connecting &&
-                tail.connectMethod === "authkey" && (
+              {visibleAuthUrl &&
+                !tail?.connecting &&
+                tail?.connectMethod === "authkey" && (
                   <p className="help">
                     Tailscale
                     仍要求网页授权，请打开下方链接完成授权，或使用有效且有权分配节点
                     tag 的 Auth Key 重试。
                   </p>
                 )}
-              {tail?.authUrl &&
-                !(tail.connecting && tail.connectMethod === "authkey") && (
+              {openNotice && (
+                <div className="notice" role="status">
+                  {openNotice}
+                </div>
+              )}
+              {policyReady &&
+                visibleAuthUrl &&
+                busyMethod !== "interactive" &&
+                !(tail?.connecting && tail.connectMethod === "authkey") && (
                   <a
                     className="authorization-link"
-                    href={tail.authUrl}
+                    href={visibleAuthUrl}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -1208,7 +1408,8 @@ function Connection({
                   </a>
                 )}
               <p className="help">
-                授权完成后会自动更新状态。授权账号需要有权分配配置的 tag。
+                点击后会等待授权链接并自动打开新标签页。授权账号需要有权分配配置的
+                tag；完成后状态会自动更新。
               </p>
               <form
                 onSubmit={(e) => {
@@ -1226,49 +1427,36 @@ function Connection({
                   required
                   onChange={(e) => setKey(e.target.value)}
                 />
-                <button disabled={busy}>使用 Auth Key 加入</button>
+                <button disabled={!policyReady || busy || !config}>
+                  使用 Auth Key 加入
+                </button>
               </form>
             </div>
           )}
         </section>
+        <section className="settings-section">
+          <h2>Zeabur 服务器</h2>
+          <dl>
+            <dt>服务器</dt>
+            <dd>{catalog?.server.name || "等待目录同步"}</dd>
+            <dt>Server ID</dt>
+            <dd className="mono">{config?.serverId}</dd>
+            <dt>集群 DNS 后缀</dt>
+            <dd className="mono">{config?.clusterDomain}</dd>
+            <dt>目录更新时间</dt>
+            <dd>
+              {catalog?.updatedAt
+                ? new Date(catalog.updatedAt).toLocaleString()
+                : "尚未同步"}
+            </dd>
+          </dl>
+          <ErrorBox message={catalog?.error || ""} />
+          <ErrorBox message={config?.withdrawalErrors?.join("；") || ""} />
+          <p className="help">
+            通过 ZEABUR_SERVER_ID 固定服务器，API Key 由环境变量提供。
+          </p>
+        </section>
       </div>
-      <section className="policy-section">
-        <h2>一次配置，后续手动发布</h2>
-        <p>
-          在 Tailscale 控制台开启 MagicDNS 和 HTTPS。为 Service 设置{" "}
-          <code>{config?.serviceTag}</code>
-          ，将以下规则合并到已有策略；访问来源可按你的团队需求调整。
-        </p>
-        <pre>
-          {config
-            ? JSON.stringify(config.policy, null, 2)
-            : "正在读取策略示例…"}
-        </pre>
-        <div className="actions">
-          <button
-            onClick={() =>
-              void navigator.clipboard.writeText(
-                JSON.stringify(config?.policy, null, 2),
-              )
-            }
-          >
-            <Copy size={15} />
-            复制策略示例
-          </button>
-          <a
-            href="https://login.tailscale.com/admin/services"
-            target="_blank"
-            rel="noreferrer"
-          >
-            打开 Tailscale Services
-            <ArrowUpRight size={15} />
-          </a>
-        </div>
-        <p className="help">
-          ztail 不修改全局策略。API Key 只用于 Service
-          定义；节点授权由上方接入流程完成。
-        </p>
-      </section>
     </>
   );
 }

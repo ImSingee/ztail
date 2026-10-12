@@ -1377,3 +1377,108 @@ footer > span:last-child {
 .auth-progress .help {
   margin: 6px 0 0;
 }
+
+.setup-policy {
+  margin-top: 0;
+  margin-bottom: 2.5rem;
+  max-width: 100%;
+}
+.setup-policy > p,
+.policy-merge-notice,
+.policy-instructions,
+.policy-preview {
+  max-width: 800px;
+}
+.setup-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  margin-right: 0.6rem;
+  border-radius: 50%;
+  color: var(--primary);
+  background: oklch(0.94 0.015 230);
+  font-size: 0.85rem;
+  vertical-align: middle;
+}
+.policy-merge-notice {
+  margin-top: 1.25rem;
+  background: oklch(0.96 0.014 230);
+  border-color: oklch(0.82 0.025 230);
+}
+.policy-merge-notice strong {
+  display: block;
+  font-size: 0.95rem;
+}
+.policy-merge-notice p {
+  margin: 0.45rem 0 0;
+}
+.policy-instructions {
+  padding-left: 1.4rem;
+  font-size: 0.875rem;
+  line-height: 1.8;
+  margin-bottom: 1.4rem;
+}
+.policy-preview {
+  margin: 1.4rem 0;
+}
+.policy-preview summary {
+  cursor: pointer;
+  color: var(--primary);
+  font-size: 0.875rem;
+  padding: 0.5rem 0;
+}
+.policy-preview summary:focus-visible {
+  outline: 3px solid oklch(0.71 0.095 230);
+  outline-offset: 3px;
+}
+.policy-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  max-width: 800px;
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+.policy-confirm input {
+  appearance: auto;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  margin: 2px 0 0;
+  accent-color: var(--primary);
+}
+.auth-prerequisite {
+  color: var(--primary);
+  font-size: 0.875rem;
+  line-height: 1.65;
+  margin-top: 0;
+}
+.setup-policy .button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 36px;
+  padding: 0.5rem 0.8rem;
+  border-radius: 6px;
+  background: var(--primary);
+  color: white;
+  font-size: 0.875rem;
+}
+.setup-policy .button-link:hover {
+  background: oklch(0.39 0.086 230);
+  text-decoration: none;
+}
+.setup-policy .actions {
+  flex-wrap: wrap;
+}
+
+.auth-controls button:disabled {
+  cursor: not-allowed;
+}
+.auth-controls button[aria-busy="true"] {
+  cursor: wait;
+}

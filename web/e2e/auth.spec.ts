@@ -7,6 +7,11 @@ async function connect(page: Page) {
   await page.goto("/settings");
   await page.getByLabel("管理员密码", { exact: true }).fill("fixture-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page
+    .getByRole("checkbox", {
+      name: "我已将策略片段合并到现有策略，并在 Tailscale 保存",
+    })
+    .check();
   await page.getByLabel("或使用 Auth Key").fill("tskey-auth-fixture-valid");
   const accepted = page.waitForResponse(
     (r) =>
@@ -45,6 +50,11 @@ test("Auth Key acceptance shows pending across reload, async error and successfu
     page.getByText("正在使用 Auth Key 接入，等待 Tailscale 确认…"),
   ).toHaveCount(0);
   await page.screenshot({ path: `${assets}/auth-invalid.png`, fullPage: true });
+  await page
+    .getByRole("checkbox", {
+      name: "我已将策略片段合并到现有策略，并在 Tailscale 保存",
+    })
+    .check();
   await page.getByLabel("或使用 Auth Key").fill("tskey-auth-fixture-retry");
   await page.getByRole("button", { name: "使用 Auth Key 加入" }).click();
   await expect(
