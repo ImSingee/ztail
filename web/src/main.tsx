@@ -253,6 +253,11 @@ function App() {
     [busy, setBusy] = useState(false),
     [deleting, setDeleting] = useState<RuleView | null>(null),
     [policyRule, setPolicyRule] = useState<Rule | null>(null);
+  const tailVersion = useRef(0);
+  const applyTailStatus = (status: Tail) => {
+    tailVersion.current++;
+    setTail(status);
+  };
   const navigate = (p: string, draft?: Rule) => {
     setPolicyRule(null);
     history.pushState({ draft }, "", p);
@@ -262,6 +267,7 @@ function App() {
     window.scrollTo(0, 0);
   };
   const load = async () => {
+    const statusVersion = tailVersion.current;
     try {
       const [r, c, t, s] = await Promise.all([
         api<RuleView[]>("/rules"),
@@ -271,7 +277,7 @@ function App() {
       ]);
       setRules(r);
       setCatalog(c);
-      setTail(t);
+      if (tailVersion.current === statusVersion) setTail(t);
       setConfig(s);
       setLoadError("");
     } catch (e) {
@@ -410,6 +416,7 @@ function App() {
             tail={tail}
             catalog={catalog}
             onUpdate={load}
+            onTailStatus={applyTailStatus}
           />
         ) : browsing ? (
           <ServiceCatalog
@@ -1039,21 +1046,28 @@ function Connection({
   tail,
   catalog,
   onUpdate,
+  onTailStatus,
 }: {
   config: Config | null;
   tail: Tail | null;
   catalog: Catalog | null;
   onUpdate: () => Promise<void>;
+  onTailStatus: (status: Tail) => void;
 }) {
   const [key, setKey] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [busyMethod, setBusyMethod] = useState(""),
+    [waitingForBrowser, setWaitingForBrowser] = useState(false),
     [authorizationUrl, setAuthorizationUrl] = useState(""),
     [hasInteractiveAttempt, setHasInteractiveAttempt] = useState(false),
     [openNotice, setOpenNotice] = useState(""),
     [copiedPolicy, setCopiedPolicy] = useState(false);
   const pending = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (tail?.state === "Running" || tail?.state === "NeedsMachineAuth")
+      setError("");
+  }, [tail?.state]);
   useEffect(
     () => () => {
       pending.current?.abort();
@@ -1070,7 +1084,9 @@ function Connection({
     setOpenNotice("");
     setAuthorizationUrl("");
     setHasInteractiveAttempt(method === "interactive");
+    setWaitingForBrowser(false);
     let timedOut = false;
+    let authPageRequested = false;
     const timeout = window.setTimeout(() => {
       timedOut = true;
       controller.abort();
@@ -1086,62 +1102,65 @@ function Connection({
         controller.signal,
       );
       setKey("");
-      if (method === "interactive") {
-        for (;;) {
-          const status = await api<Tail>(
-            "/tailscale",
-            "GET",
-            undefined,
-            controller.signal,
-          );
-          if (
-            status.state === "Running" ||
-            status.state === "NeedsMachineAuth"
-          ) {
-            break;
-          }
-          if (status.error) throw new Error(status.error);
-          if (status.authUrl) {
-            const url = new URL(status.authUrl);
-            if (url.protocol !== "https:" && url.protocol !== "http:")
-              throw new Error("Tailscale 返回了无效的授权链接，请重试");
-            setAuthorizationUrl(url.href);
-            // Open only the final authorization page. Browsers that block
-            // asynchronous popups get an explicit link in the original page.
-            let opened: Window | null = null;
-            try {
-              opened = window.open(url.href, "_blank");
-              if (opened) opened.opener = null;
-            } catch {
-              /* manual link remains available */
-            }
-            if (!opened)
-              setOpenNotice(
-                "授权链接已准备好。浏览器阻止了新标签页，请点击下方链接打开。",
-              );
-            break;
-          }
-          await new Promise<void>((resolve, reject) => {
-            const abort = () => {
-              window.clearTimeout(timer);
-              reject(new DOMException("Aborted", "AbortError"));
-            };
-            const timer = window.setTimeout(() => {
-              controller.signal.removeEventListener("abort", abort);
-              resolve();
-            }, 1000);
-            controller.signal.addEventListener("abort", abort, { once: true });
-            if (controller.signal.aborted) {
-              controller.signal.removeEventListener("abort", abort);
-              abort();
-            }
-          });
+      for (;;) {
+        const status = await api<Tail>(
+          "/tailscale",
+          "GET",
+          undefined,
+          controller.signal,
+        );
+        onTailStatus(status);
+        if (status.state === "Running" || status.state === "NeedsMachineAuth") {
+          break;
         }
+        if (status.error) throw new Error(status.error);
+        if (method === "interactive" && status.authUrl && !authPageRequested) {
+          const url = new URL(status.authUrl);
+          if (url.protocol !== "https:" && url.protocol !== "http:")
+            throw new Error("Tailscale 返回了无效的授权链接，请重试");
+          authPageRequested = true;
+          setWaitingForBrowser(true);
+          setAuthorizationUrl(url.href);
+          // Open only the final authorization page. Browsers that block
+          // asynchronous popups get an explicit link in the original page.
+          let opened: Window | null = null;
+          try {
+            opened = window.open(url.href, "_blank");
+            if (opened) opened.opener = null;
+          } catch {
+            /* manual link remains available */
+          }
+          if (!opened)
+            setOpenNotice(
+              "授权链接已准备好。浏览器阻止了新标签页，请点击下方链接打开。",
+            );
+        }
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => {
+            window.clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+          };
+          const timer = window.setTimeout(() => {
+            controller.signal.removeEventListener("abort", abort);
+            resolve();
+          }, 1000);
+          controller.signal.addEventListener("abort", abort, { once: true });
+          if (controller.signal.aborted) {
+            controller.signal.removeEventListener("abort", abort);
+            abort();
+          }
+        });
       }
       if (!controller.signal.aborted) await onUpdate();
     } catch (e) {
       if (timedOut)
-        setError("等待授权链接超过 90 秒，请检查 Tailscale 网络连接后重试。");
+        setError(
+          method === "authkey"
+            ? "Auth Key 接入等待超过 90 秒，请检查网络、Key 和 tag 权限后重试；后台可能仍在尝试连接。"
+            : authPageRequested
+              ? "等待网页授权完成超过 90 秒，请完成授权或重试。"
+              : "等待授权链接超过 90 秒，请检查 Tailscale 网络连接后重试。",
+        );
       else if (!controller.signal.aborted) setError((e as Error).message);
     } finally {
       window.clearTimeout(timeout);
@@ -1149,6 +1168,7 @@ function Connection({
       if (!controller.signal.aborted || timedOut) {
         setBusy(false);
         setBusyMethod("");
+        setWaitingForBrowser(false);
       }
     }
   };
@@ -1156,6 +1176,20 @@ function Connection({
     authorizationUrl || (!hasInteractiveAttempt ? tail?.authUrl : "");
 
   const connected = tail?.state === "Running";
+  const activeMethod =
+    busyMethod ||
+    (tail?.connecting && !tail.error && !error ? tail.connectMethod : "");
+  const interactivePending = activeMethod === "interactive";
+  const keyPending = activeMethod === "authkey";
+  const browserPending =
+    waitingForBrowser || (!busyMethod && interactivePending && !!tail?.authUrl);
+  // This notice is expected when ztail does not consume other subnet routes.
+  const healthWarnings =
+    tail?.health?.filter(
+      (w) =>
+        w.trim().replace(/\.$/, "") !==
+        "Some peers are advertising routes but --accept-routes is false",
+    ) || [];
   const policyGuide = (
     <section
       className="policy-section setup-policy"
@@ -1315,12 +1349,12 @@ function Connection({
                   "badge " + (tail?.state === "Running" ? "success" : "neutral")
                 }
               >
-                {tail?.connecting
-                  ? "接入中"
-                  : tail?.state === "Running"
-                    ? "已连接"
-                    : tail?.state === "NeedsMachineAuth"
-                      ? "等待节点审批"
+                {tail?.state === "Running"
+                  ? "已连接"
+                  : tail?.state === "NeedsMachineAuth"
+                    ? "等待节点审批"
+                    : busy || tail?.connecting
+                      ? "接入中"
                       : tail?.state === "NeedsLogin"
                         ? "等待授权"
                         : tail?.state || "读取中"}
@@ -1346,26 +1380,13 @@ function Connection({
                 : "未配置 · 绑定已有 Service"}
             </dd>
           </dl>
-          {tail?.connecting && (
-            <div className="notice auth-progress" role="status">
-              <Busy />
-              <div>
-                <div>
-                  {tail.connectMethod === "authkey"
-                    ? "正在使用 Auth Key 接入，等待 Tailscale 确认…"
-                    : "正在请求授权，请打开授权页面完成登录…"}
-                </div>
-                <p className="help">状态会自动更新；请求已接受不代表已连接。</p>
-              </div>
-            </div>
-          )}
           <ErrorBox message={tail?.error || ""} />
-          {tail?.health?.length ? (
+          {healthWarnings.length ? (
             <div className="notice" role="status">
-              Tailscale 健康提示：{tail.health.join("；")}
+              Tailscale 健康提示：{healthWarnings.join("；")}
             </div>
           ) : null}
-          <ErrorBox message={error} />
+          <ErrorBox message={error !== tail?.error ? error : ""} />
           {tail?.state === "NeedsMachineAuth" && (
             <div className="notice">
               节点已接入，等待管理员审批。
@@ -1386,18 +1407,23 @@ function Connection({
                 <button
                   className="primary"
                   disabled={busy || !config}
-                  aria-busy={busyMethod === "interactive"}
+                  aria-busy={interactivePending}
                   onClick={() => void connect("interactive")}
                 >
-                  {busyMethod === "interactive" ? (
-                    <Busy />
-                  ) : (
-                    <ArrowUpRight size={16} />
-                  )}
-                  {busyMethod === "interactive"
-                    ? "正在获取授权链接…"
+                  {interactivePending ? <Busy /> : <ArrowUpRight size={16} />}
+                  {interactivePending
+                    ? browserPending
+                      ? "等待授权完成…"
+                      : "正在获取授权链接…"
                     : "交互式授权"}
                 </button>
+                {interactivePending && (
+                  <p className="help" role="status">
+                    {browserPending
+                      ? "请在 Tailscale 页面完成授权，ztail 正在等待连接确认。"
+                      : "正在获取授权链接，准备好后会自动打开。"}
+                  </p>
+                )}
                 {visibleAuthUrl &&
                   !tail?.connecting &&
                   tail?.connectMethod === "authkey" && (
@@ -1413,7 +1439,7 @@ function Connection({
                   </div>
                 )}
                 {visibleAuthUrl &&
-                  busyMethod !== "interactive" &&
+                  (!interactivePending || browserPending) &&
                   !(tail?.connecting && tail.connectMethod === "authkey") && (
                     <a
                       className="authorization-link"
@@ -1445,7 +1471,14 @@ function Connection({
                     required
                     onChange={(e) => setKey(e.target.value)}
                   />
-                  <button disabled={busy || !config}>使用 Auth Key 加入</button>
+                  <button disabled={busy || !config} aria-busy={keyPending}>
+                    {keyPending && <Busy />}使用 Auth Key 加入
+                  </button>
+                  {keyPending && (
+                    <p className="help" role="status">
+                      正在使用 Auth Key 接入，等待 Tailscale 确认…
+                    </p>
+                  )}
                 </form>
               </div>
             )}

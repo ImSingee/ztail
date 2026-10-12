@@ -165,6 +165,13 @@ func TestBrowserServer(t *testing.T) {
 					tail.state.Connecting = false
 					tail.state.Error = ""
 					tail.state.State = "NeedsMachineAuth"
+				case "joining":
+					tail.state.State = "Starting"
+					tail.state.Connecting = true
+				case "routes":
+					tail.state.Health = []string{"Some peers are advertising routes but --accept-routes is false"}
+				case "mixed-health":
+					tail.state.Health = []string{"Some peers are advertising routes but --accept-routes is false.", "Unable to connect to the Tailscale coordination server"}
 				case "health":
 					tail.state.Health = []string{"Unable to connect to the Tailscale coordination server"}
 				}

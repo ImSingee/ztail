@@ -174,6 +174,10 @@ test("blocked popup provides fresh manual link and failed retry hides old link",
   await expect(
     page.getByRole("link", { name: "打开 Tailscale 授权页面" }),
   ).toHaveAttribute("href", "http://127.0.0.1:18080/fixture/authorize");
+  await expect(
+    page.getByRole("button", { name: "等待授权完成…" }),
+  ).toHaveAttribute("aria-busy", "true");
+  await page.request.get("/fixture/auth-state?state=error");
   await expect(page.getByRole("button", { name: "交互式授权" })).toBeEnabled();
   await capture(page, "settings-popup-fallback");
   await page.route("**/api/tailscale/connect", (route) =>
