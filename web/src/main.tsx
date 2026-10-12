@@ -1337,166 +1337,173 @@ function Connection({
           刷新状态
         </button>
       </div>
-      {serverContext}
-      {tail && !connected && policyGuide}
-      <div className="node-settings">
-        <section className="settings-section">
-          <h2>
-            {connected || !tail ? (
-              "Tailscale 节点"
-            ) : (
-              <>
-                <span className="setup-step">2</span>授权 Tailscale 节点
-              </>
+      <div
+        className={connected ? "settings-grid connected-settings" : undefined}
+      >
+        {serverContext}
+        {tail && !connected && policyGuide}
+        <div className="node-settings">
+          <section className="settings-section">
+            <h2>
+              {connected || !tail ? (
+                "Tailscale 节点"
+              ) : (
+                <>
+                  <span className="setup-step">2</span>授权 Tailscale 节点
+                </>
+              )}
+            </h2>
+            {!tail && (
+              <p className="help" role="status">
+                正在读取节点连接状态…
+              </p>
             )}
-          </h2>
-          {!tail && (
-            <p className="help" role="status">
-              正在读取节点连接状态…
-            </p>
-          )}
-          <dl>
-            <dt>连接状态</dt>
-            <dd>
-              <span
-                className={
-                  "badge " + (tail?.state === "Running" ? "success" : "neutral")
-                }
-              >
-                {tail?.state === "Running"
-                  ? "已连接"
-                  : tail?.state === "NeedsMachineAuth"
-                    ? "等待节点审批"
-                    : busy || tail?.connecting
-                      ? "接入中"
-                      : tail?.state === "NeedsLogin"
-                        ? "等待授权"
-                        : tail?.state || "读取中"}
-              </span>
-            </dd>
-            <dt>Tailnet</dt>
-            <dd>{tail?.tailnet || "—"}</dd>
-            <dt>节点</dt>
-            <dd>{tail?.hostname || "ztail"}</dd>
-            <dt>配置的 tag</dt>
-            <dd className="mono">{config?.nodeTag}</dd>
-            <dt>实际 tag</dt>
-            <dd className="mono">{tail?.tags?.join(", ") || "尚未获得 tag"}</dd>
-            <dt>MagicDNS / HTTPS</dt>
-            <dd>
-              {tail?.magicDns ? "已开启" : "未确认"} /{" "}
-              {tail?.https ? "已开启" : "未确认"}
-            </dd>
-            <dt>API Key</dt>
-            <dd>
-              {config?.apiKeyConfigured
-                ? "已配置 · 发布时校验权限"
-                : "未配置 · 绑定已有 Service"}
-            </dd>
-          </dl>
-          <ErrorBox message={tail?.error || ""} />
-          {healthWarnings.length ? (
-            <div className="notice" role="status">
-              Tailscale 健康提示：{healthWarnings.join("；")}
-            </div>
-          ) : null}
-          <ErrorBox message={error !== tail?.error ? error : ""} />
-          {tail?.state === "NeedsMachineAuth" && (
-            <div className="notice">
-              节点已接入，等待管理员审批。
-              <a
-                href="https://login.tailscale.com/admin/machines"
-                target="_blank"
-                rel="noreferrer"
-              >
-                打开节点管理
-              </a>
-            </div>
-          )}
-          {tail &&
-            tail.state !== "Running" &&
-            tail.state !== "NeedsMachineAuth" && (
-              <div className="auth-controls">
-                <p className="help">请先保存上方合并后的策略，再开始授权。</p>
-                <button
-                  className="primary"
-                  disabled={busy || !config}
-                  aria-busy={interactivePending}
-                  onClick={() => void connect("interactive")}
+            <dl>
+              <dt>连接状态</dt>
+              <dd>
+                <span
+                  className={
+                    "badge " +
+                    (tail?.state === "Running" ? "success" : "neutral")
+                  }
                 >
-                  {interactivePending ? <Busy /> : <ArrowUpRight size={16} />}
-                  {interactivePending
-                    ? browserPending
-                      ? "等待授权完成…"
-                      : "正在获取授权链接…"
-                    : "交互式授权"}
-                </button>
-                {interactivePending && (
-                  <p className="help" role="status">
-                    {browserPending
-                      ? "请在 Tailscale 页面完成授权，ztail 正在等待连接确认。"
-                      : "正在获取授权链接，准备好后会自动打开。"}
-                  </p>
-                )}
-                {visibleAuthUrl &&
-                  !tail?.connecting &&
-                  tail?.connectMethod === "authkey" && (
-                    <p className="help">
-                      Tailscale
-                      仍要求网页授权，请打开下方链接完成授权，或使用有效且有权分配节点
-                      tag 的 Auth Key 重试。
-                    </p>
-                  )}
-                {openNotice && (
-                  <div className="notice" role="status">
-                    {openNotice}
-                  </div>
-                )}
-                {visibleAuthUrl &&
-                  (!interactivePending || browserPending) &&
-                  !(tail?.connecting && tail.connectMethod === "authkey") && (
-                    <a
-                      className="authorization-link"
-                      href={visibleAuthUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      打开 Tailscale 授权页面
-                      <ArrowUpRight size={15} />
-                    </a>
-                  )}
-                <p className="help">
-                  点击后会等待授权链接并自动打开新标签页。授权账号需要有权分配配置的
-                  tag；完成后状态会自动更新。
-                </p>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void connect("authkey");
-                  }}
+                  {tail?.state === "Running"
+                    ? "已连接"
+                    : tail?.state === "NeedsMachineAuth"
+                      ? "等待节点审批"
+                      : busy || tail?.connecting
+                        ? "接入中"
+                        : tail?.state === "NeedsLogin"
+                          ? "等待授权"
+                          : tail?.state || "读取中"}
+                </span>
+              </dd>
+              <dt>Tailnet</dt>
+              <dd>{tail?.tailnet || "—"}</dd>
+              <dt>节点</dt>
+              <dd>{tail?.hostname || "ztail"}</dd>
+              <dt>配置的 tag</dt>
+              <dd className="mono">{config?.nodeTag}</dd>
+              <dt>实际 tag</dt>
+              <dd className="mono">
+                {tail?.tags?.join(", ") || "尚未获得 tag"}
+              </dd>
+              <dt>MagicDNS / HTTPS</dt>
+              <dd>
+                {tail?.magicDns ? "已开启" : "未确认"} /{" "}
+                {tail?.https ? "已开启" : "未确认"}
+              </dd>
+              <dt>API Key</dt>
+              <dd>
+                {config?.apiKeyConfigured
+                  ? "已配置 · 发布时校验权限"
+                  : "未配置 · 绑定已有 Service"}
+              </dd>
+            </dl>
+            <ErrorBox message={tail?.error || ""} />
+            {healthWarnings.length ? (
+              <div className="notice" role="status">
+                Tailscale 健康提示：{healthWarnings.join("；")}
+              </div>
+            ) : null}
+            <ErrorBox message={error !== tail?.error ? error : ""} />
+            {tail?.state === "NeedsMachineAuth" && (
+              <div className="notice">
+                节点已接入，等待管理员审批。
+                <a
+                  href="https://login.tailscale.com/admin/machines"
+                  target="_blank"
+                  rel="noreferrer"
                 >
-                  <label htmlFor="auth-key">或使用 Auth Key</label>
-                  <input
-                    id="auth-key"
-                    type="password"
-                    autoComplete="off"
-                    value={key}
-                    placeholder="tskey-auth-…"
-                    required
-                    onChange={(e) => setKey(e.target.value)}
-                  />
-                  <button disabled={busy || !config} aria-busy={keyPending}>
-                    {keyPending && <Busy />}使用 Auth Key 加入
-                  </button>
-                  {keyPending && (
-                    <p className="help" role="status">
-                      正在使用 Auth Key 接入，等待 Tailscale 确认…
-                    </p>
-                  )}
-                </form>
+                  打开节点管理
+                </a>
               </div>
             )}
-        </section>
+            {tail &&
+              tail.state !== "Running" &&
+              tail.state !== "NeedsMachineAuth" && (
+                <div className="auth-controls">
+                  <p className="help">请先保存上方合并后的策略，再开始授权。</p>
+                  <button
+                    className="primary"
+                    disabled={busy || !config}
+                    aria-busy={interactivePending}
+                    onClick={() => void connect("interactive")}
+                  >
+                    {interactivePending ? <Busy /> : <ArrowUpRight size={16} />}
+                    {interactivePending
+                      ? browserPending
+                        ? "等待授权完成…"
+                        : "正在获取授权链接…"
+                      : "交互式授权"}
+                  </button>
+                  {interactivePending && (
+                    <p className="help" role="status">
+                      {browserPending
+                        ? "请在 Tailscale 页面完成授权，ztail 正在等待连接确认。"
+                        : "正在获取授权链接，准备好后会自动打开。"}
+                    </p>
+                  )}
+                  {visibleAuthUrl &&
+                    !tail?.connecting &&
+                    tail?.connectMethod === "authkey" && (
+                      <p className="help">
+                        Tailscale
+                        仍要求网页授权，请打开下方链接完成授权，或使用有效且有权分配节点
+                        tag 的 Auth Key 重试。
+                      </p>
+                    )}
+                  {openNotice && (
+                    <div className="notice" role="status">
+                      {openNotice}
+                    </div>
+                  )}
+                  {visibleAuthUrl &&
+                    (!interactivePending || browserPending) &&
+                    !(tail?.connecting && tail.connectMethod === "authkey") && (
+                      <a
+                        className="authorization-link"
+                        href={visibleAuthUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        打开 Tailscale 授权页面
+                        <ArrowUpRight size={15} />
+                      </a>
+                    )}
+                  <p className="help">
+                    点击后会等待授权链接并自动打开新标签页。授权账号需要有权分配配置的
+                    tag；完成后状态会自动更新。
+                  </p>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void connect("authkey");
+                    }}
+                  >
+                    <label htmlFor="auth-key">或使用 Auth Key</label>
+                    <input
+                      id="auth-key"
+                      type="password"
+                      autoComplete="off"
+                      value={key}
+                      placeholder="tskey-auth-…"
+                      required
+                      onChange={(e) => setKey(e.target.value)}
+                    />
+                    <button disabled={busy || !config} aria-busy={keyPending}>
+                      {keyPending && <Busy />}使用 Auth Key 加入
+                    </button>
+                    {keyPending && (
+                      <p className="help" role="status">
+                        正在使用 Auth Key 接入，等待 Tailscale 确认…
+                      </p>
+                    )}
+                  </form>
+                </div>
+              )}
+          </section>
+        </div>
       </div>
       {connected && (
         <details className="connected-policy">

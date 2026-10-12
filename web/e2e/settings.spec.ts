@@ -15,6 +15,17 @@ async function login(page: Page) {
     page.getByRole("heading", { name: /先配置 Tailscale 策略/ }),
   ).toBeVisible();
 }
+async function parallelStatus(page: Page) {
+  const server = (await page
+    .getByRole("heading", { name: "Zeabur 服务器", exact: true })
+    .boundingBox())!;
+  const node = (await page
+    .getByRole("heading", { name: "Tailscale 节点", exact: true })
+    .boundingBox())!;
+  expect(Math.abs(server.y - node.y)).toBeLessThan(2);
+  expect(server.x + server.width).toBeLessThan(node.x);
+  return { server, node };
+}
 test.beforeEach(async ({ request }) => {
   await request.get("/fixture/reset");
   const hash = createHash("sha256")
@@ -144,6 +155,7 @@ test("interactive keeps loading after 202 with no intermediate tab, and opens fi
   await capture(popup, "settings-authorized-tab");
   expect(await popup.evaluate(() => window.opener)).toBeNull();
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
+  await parallelStatus(page);
   await capture(page, "settings-interactive-connected");
   writeFileSync(
     `${assets}/settings-interactive-audit.json`,
@@ -325,18 +337,22 @@ test("authorized cold-load prioritizes node status and retains quiet policy refe
     "",
   );
   await expect(page.locator("pre")).toBeHidden();
-  const serverY = (await page
-    .getByRole("heading", { name: "Zeabur 服务器", exact: true })
-    .boundingBox())!.y;
-  const nodeY = (await page
-    .getByRole("heading", { name: "Tailscale 节点", exact: true })
-    .boundingBox())!.y;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const desktop = await parallelStatus(page);
   const policyY = (await page
     .getByText("访问策略与合并片段", { exact: true })
     .boundingBox())!.y;
-  expect(serverY).toBeLessThan(nodeY);
-  expect(nodeY).toBeLessThan(policyY);
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  expect(desktop.node.y).toBeLessThan(policyY);
+  const serverLabel = (await page
+    .locator(".server-facts dt")
+    .first()
+    .boundingBox())!;
+  const serverValue = (await page
+    .locator(".server-facts dd")
+    .first()
+    .boundingBox())!;
+  expect(Math.abs(serverLabel.y - serverValue.y)).toBeLessThan(2);
+  expect(serverLabel.x).toBeLessThan(serverValue.x);
   await capture(page, "settings-connected-desktop");
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
@@ -344,6 +360,14 @@ test("authorized cold-load prioritizes node status and retains quiet policy refe
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+  const mobileServer = (await page
+    .getByRole("heading", { name: "Zeabur 服务器", exact: true })
+    .boundingBox())!;
+  const mobileNode = (await page
+    .getByRole("heading", { name: "Tailscale 节点", exact: true })
+    .boundingBox())!;
+  expect(mobileServer.y).toBeLessThan(mobileNode.y);
+  expect(mobileServer.x).toBe(mobileNode.x);
   await capture(page, "settings-connected-mobile");
   await page.getByText("访问策略与合并片段", { exact: true }).click();
   await expect(page.locator("pre")).toBeVisible();
@@ -363,7 +387,11 @@ test("authorized cold-load prioritizes node status and retains quiet policy refe
       {
         coldLoadState: "Running",
         loadingOnboardingHidden: true,
-        order: "server,node,collapsedPolicy",
+        order:
+          "desktop:server-left,node-right;mobile:server,node;collapsedPolicy-below",
+        desktop,
+        mobile: { server: mobileServer, node: mobileNode },
+        serverFields: { label: serverLabel, value: serverValue },
         policy: settings.policy,
         copiedPolicy: copied,
         afterReloadCollapsed: true,

@@ -102,6 +102,14 @@ test("Auth Key owns its spinner until connected, and a stale refresh cannot undo
   await page.waitForTimeout(150);
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
   await expect(page.getByText("等待授权", { exact: true })).toHaveCount(0);
+  const server = (await page
+    .getByRole("heading", { name: "Zeabur 服务器", exact: true })
+    .boundingBox())!;
+  const node = (await page
+    .getByRole("heading", { name: "Tailscale 节点", exact: true })
+    .boundingBox())!;
+  expect(Math.abs(server.y - node.y)).toBeLessThan(2);
+  expect(server.x + server.width).toBeLessThan(node.x);
   await capture(page, "key-connected-stable");
   writeFileSync(
     `${assets}/key-progress-audit.json`,
@@ -112,6 +120,7 @@ test("Auth Key owns its spinner until connected, and a stale refresh cannot undo
         interactiveBusy: false,
         staleRefreshState: "NeedsLogin",
         finalState: "Running",
+        connectedLayout: { server, node },
         audit: await (await request.get("/fixture/audit")).json(),
       },
       null,
@@ -151,6 +160,14 @@ test("interactive URL transitions to waiting for authorization, and opens only o
   await capture(page, "interactive-awaiting-confirmation");
   await request.get("/fixture/authorize");
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
+  const server = (await page
+    .getByRole("heading", { name: "Zeabur 服务器", exact: true })
+    .boundingBox())!;
+  const node = (await page
+    .getByRole("heading", { name: "Tailscale 节点", exact: true })
+    .boundingBox())!;
+  expect(Math.abs(server.y - node.y)).toBeLessThan(2);
+  expect(server.x + server.width).toBeLessThan(node.x);
   writeFileSync(
     `${assets}/interactive-progress-audit.json`,
     JSON.stringify(
@@ -159,6 +176,7 @@ test("interactive URL transitions to waiting for authorization, and opens only o
         tabCount: context.pages().length,
         phaseBefore: "waiting-authorization",
         finalState: "Running",
+        connectedLayout: { server, node },
       },
       null,
       2,
