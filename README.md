@@ -162,6 +162,7 @@ Playwright 启动的是独立 `_test.go` 程序：真实面板、HTTP 接口、S
 - 首版只发布 HTTP/HTTPS Web 服务，前端固定 HTTPS 443；不包含 TCP 数据库代理、路径分流、Funnel、自定义公网域名或多 tailnet。
 - 节点缺少 tag：检查 tagOwners、授权账号以及实际节点 tag。
 - Service 未定义/不可见：检查名称、`tcp:443`、Service tag 和访问策略。
+- Service 名称与已有节点名称冲突：修改发布规则的 Service 名称。例如节点已使用 `ztail.<tailnet>.ts.net` 时，可将 Service 命名为 `ztail-web`；节点与 Service 不能占用同一个访问名称。
 - 已广告但无法访问：检查控制台主机审批、访问授权、MagicDNS/HTTPS 和调用设备的 tailnet 连接。
 - 后端不可达：检查环境 ID、端口、服务运行状态、集群 DNS/网络及 HTTPS 证书。
 - 切换到另一个 tailnet 会停止套用旧规则；首版不提供切换功能。不同部署使用独立数据卷。

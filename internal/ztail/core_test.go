@@ -331,6 +331,8 @@ func TestTailscaleAPINeverOverwrites(t *testing.T) {
 			io.WriteString(w, `{"ports":["tcp:443","tcp:80"]}`)
 		case "invalid":
 			w.WriteHeader(401)
+		case "node-name":
+			jsonResponse(w, 400, map[string]string{"message": "name exists but is not a service"})
 		}
 	}))
 	defer server.Close()
@@ -346,7 +348,7 @@ func TestTailscaleAPINeverOverwrites(t *testing.T) {
 	if events[len(events)-1] != "PUT /tailnet/fixture-tailnet/vip-services/svc:grafana" {
 		t.Fatal(events)
 	}
-	for _, m := range []string{"existing", "incompatible", "invalid"} {
+	for _, m := range []string{"existing", "incompatible", "invalid", "node-name"} {
 		mode = m
 		before := len(events)
 		err := a.Ensure(ctx, "fixture-tailnet", "grafana", true)
@@ -355,6 +357,9 @@ func TestTailscaleAPINeverOverwrites(t *testing.T) {
 		}
 		if len(events) != before+1 || !strings.HasPrefix(events[len(events)-1], "GET ") {
 			t.Fatal("existing overwritten")
+		}
+		if m == "node-name" && !strings.Contains(err.Error(), "已有节点名称冲突") {
+			t.Fatal("collision explanation lost", err)
 		}
 	}
 	t.Logf("HTTP API audit: %v", events)
