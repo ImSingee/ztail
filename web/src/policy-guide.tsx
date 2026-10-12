@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import type { Config, Rule, Tail } from "./main";
+import { accessPreview, publicPort, rulePolicy } from "./rule-helpers";
 
 export function PolicyError({
   message,
@@ -123,7 +124,10 @@ export function PolicyGuide({
   const dialog = useModalDialog();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const policy = config ? JSON.stringify(config.policy, null, 2) : "";
+  const policy = config
+    ? JSON.stringify(rulePolicy(config, rule), null, 2)
+    : "";
+  const port = publicPort(rule);
   return (
     <dialog
       ref={dialog}
@@ -182,9 +186,9 @@ export function PolicyGuide({
               <div className="guide-field">
                 <div className="guide-port">
                   <span>tcp:</span>
-                  <input id="guide-service-port" readOnly value="443" />
+                  <input id="guide-service-port" readOnly value={port} />
                 </div>
-                <CopyValue value="443" label="Ports" />
+                <CopyValue value={String(port)} label="Ports" />
               </div>
               <label htmlFor="guide-service-tag">Service tags</label>
               <div className="guide-field">
@@ -197,7 +201,8 @@ export function PolicyGuide({
               </div>
             </div>
             <p className="help">
-              Ports 左侧已有 tcp: 时，只填 443。这里是 tailnet HTTPS
+              Ports 左侧已有 tcp: 时，只填 {port}。这里是 tailnet{" "}
+              {rule.protocol === "tcp" ? "TCP" : "HTTPS"}
               入口；后端端口 {rule.port} 继续由 ztail 转发。
             </p>
             <p className="help">
@@ -205,7 +210,7 @@ export function PolicyGuide({
               节点使用 <code>{config.nodeTag}</code>。
             </p>
             <div className="guide-domain mono">
-              https://{rule.name}.{tail?.dnsSuffix || "<tailnet>.ts.net"}
+              {accessPreview(rule, tail?.dnsSuffix)}
             </div>
           </section>
           <section className="guide-step">
@@ -223,7 +228,8 @@ export function PolicyGuide({
             <p>
               将以下片段合并到已有策略，保留其它规则。它允许带{" "}
               <code>{config.nodeTag}</code>{" "}
-              的节点承载这组服务，并允许所列来源访问 HTTPS 443。
+              的节点承载这组服务，并允许所列来源访问{" "}
+              {rule.protocol === "tcp" ? "TCP" : "HTTPS"} {port}。
             </p>
             <p className="help">
               已有 tagOwners、autoApprovers 或 grants
@@ -244,7 +250,10 @@ export function PolicyGuide({
               节点。启用上述自动审批规则后，符合条件的广告会自动批准。
             </p>
             <p className="help">
-              确认 tailnet 已开启 MagicDNS 和 HTTPS。ztail
+              确认 tailnet 已开启 MagicDNS
+              {rule.protocol === "tcp"
+                ? "。TCP 无需 HTTPS 证书。ztail"
+                : " 和 HTTPS。ztail"}
               提供配置指南，策略由你在 Tailscale 控制台保存。
             </p>
           </section>
@@ -317,7 +326,8 @@ export function PublishedAccessHelp({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <p id="access-help-description" className="muted">
-        已发布表示 ztail 已声明承载服务。访问 HTTPS 地址前，请确认以下两点。
+        已发布表示 ztail
+        已声明承载服务。访问前请确认主机审批与发布端口的访问权限。
       </p>
       <section className="guide-step">
         <div className="guide-step-heading">
@@ -340,9 +350,10 @@ export function PublishedAccessHelp({ onClose }: { onClose: () => void }) {
       <section className="guide-step">
         <h3>2. 等待首次 HTTPS 证书签发</h3>
         <p>
-          新发布的服务需要由 Tailscale 为其 HTTPS
+          Web 服务需要由 Tailscale 为其 HTTPS
           域名签发证书，首次签发可能需要数分钟。
-          如果刚刚发布，请稍候再打开访问地址。
+          如果刚刚发布，请稍候再打开访问地址。 TCP 服务不需要 HTTPS
+          证书，请使用对应客户端连接显示的主机名和发布端口。
         </p>
       </section>
       <div className="guide-actions">

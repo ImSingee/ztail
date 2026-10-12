@@ -47,7 +47,7 @@ type Tailnet interface {
 	Status(context.Context) TailStatus
 	Connect(context.Context, string, string) error
 	Services(context.Context) (map[string]ServiceDefinition, error)
-	Listen(context.Context, string) (net.Listener, error)
+	Listen(context.Context, Rule) (net.Listener, error)
 	ListenPanel(context.Context) (net.Listener, error)
 	Withdraw(context.Context, string) error
 	Advertisements(context.Context) ([]string, error)
@@ -290,7 +290,10 @@ func (t *EmbeddedTailnet) Services(ctx context.Context) (map[string]ServiceDefin
 	}
 	return out, nil
 }
-func (t *EmbeddedTailnet) Listen(ctx context.Context, name string) (net.Listener, error) {
+func (t *EmbeddedTailnet) Listen(ctx context.Context, rule Rule) (net.Listener, error) {
+	if err := rule.Validate(); err != nil {
+		return nil, err
+	}
 	st := t.Status(ctx)
 	if st.State != "Running" {
 		return nil, errors.New("请先完成 Tailscale 授权")
@@ -302,7 +305,10 @@ func (t *EmbeddedTailnet) Listen(ctx context.Context, name string) (net.Listener
 	// Running, and serialize it with Connect/Close through the owner mutex.
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.server.ListenService("svc:"+name, tsnet.ServiceModeHTTP{HTTPS: true, Port: 443})
+	if rule.Protocol == "tcp" {
+		return t.server.ListenService("svc:"+rule.Name, tsnet.ServiceModeTCP{Port: uint16(rule.PublicPort())})
+	}
+	return t.server.ListenService("svc:"+rule.Name, tsnet.ServiceModeHTTP{HTTPS: true, Port: 443})
 }
 
 // ListenPanel binds the node's own HTTPS port, independently of Service VIPs.

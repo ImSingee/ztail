@@ -14,7 +14,7 @@ import (
 )
 
 type Registry interface {
-	Ensure(context.Context, string, string, bool) error
+	Ensure(context.Context, string, Rule) error
 }
 type TailscaleAPI struct {
 	key, endpoint string
@@ -43,17 +43,17 @@ func (a *TailscaleAPI) request(ctx context.Context, method, path string, body []
 	}
 	return data, resp.StatusCode, nil
 }
-func (a *TailscaleAPI) Ensure(ctx context.Context, tailnet, name string, create bool) error {
-	path := "/tailnet/" + url.PathEscape(tailnet) + "/vip-services/" + url.PathEscape("svc:"+name)
+func (a *TailscaleAPI) Ensure(ctx context.Context, tailnet string, rule Rule) error {
+	path := "/tailnet/" + url.PathEscape(tailnet) + "/vip-services/" + url.PathEscape("svc:"+rule.Name)
 	body, status, err := a.request(ctx, "GET", path, nil)
 	if err != nil {
 		return err
 	}
 	if status == 404 {
-		if !create {
+		if !rule.CreateService {
 			return errors.New("Service 尚未定义，请到 Tailscale 控制台创建或启用 API 创建")
 		}
-		body, _ = json.Marshal(ServiceDefinition{Name: "svc:" + name, Ports: []string{"tcp:443"}, Tags: []string{"tag:ztail-service"}})
+		body, _ = json.Marshal(ServiceDefinition{Name: "svc:" + rule.Name, Ports: []string{rule.ServicePort()}, Tags: []string{"tag:ztail-service"}})
 		body, status, err = a.request(ctx, "PUT", path, body)
 		if err != nil {
 			return err
@@ -70,16 +70,16 @@ func (a *TailscaleAPI) Ensure(ctx context.Context, tailnet, name string, create 
 	if json.Unmarshal(body, &def) != nil {
 		return errors.New("Tailscale API 返回无效 Service 定义")
 	}
-	return compatiblePorts(def.Ports)
+	return compatiblePorts(def.Ports, rule.ServicePort())
 }
-func compatiblePorts(ports []string) error {
+func compatiblePorts(ports []string, expected string) error {
 	if len(ports) == 0 {
 		return nil
 	}
-	if len(ports) == 1 && (ports[0] == "tcp:443" || ports[0] == "do-not-validate") {
+	if len(ports) == 1 && (ports[0] == expected || ports[0] == "do-not-validate") {
 		return nil
 	}
-	return errors.New("Service 必须仅定义 tcp:443（或 do-not-validate）；ztail 不覆盖已有定义")
+	return fmt.Errorf("Service 必须仅定义 %s（或 do-not-validate）；ztail 不覆盖已有定义，请修改控制台中的端口或使用新名称。配置访问策略", expected)
 }
 func (a *TailscaleAPI) apiError(status int, body []byte) error {
 	message := fmt.Sprintf("Tailscale API 返回 HTTP %d", status)

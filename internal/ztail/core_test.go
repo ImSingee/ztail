@@ -54,18 +54,19 @@ func (f *fakeCatalog) Contains(r Rule) bool {
 }
 
 type fakeTail struct {
-	mu               sync.Mutex
-	state            TailStatus
-	defs             map[string]ServiceDefinition
-	listeners        map[string]net.Listener
-	ads              map[string]bool
-	connects         []map[string]any
-	listenCount      int
-	withdrawFailure  bool
-	listenFailure    string
-	panelListener    net.Listener
-	panelFailure     bool
-	panelListenCount int
+	mu                sync.Mutex
+	state             TailStatus
+	defs              map[string]ServiceDefinition
+	listeners         map[string]net.Listener
+	ads               map[string]bool
+	connects          []map[string]any
+	listenCount       int
+	withdrawFailure   bool
+	listenFailure     string
+	listenFailureOnce bool
+	panelListener     net.Listener
+	panelFailure      bool
+	panelListenCount  int
 }
 
 func newFakeTail(tag string) *fakeTail {
@@ -106,10 +107,15 @@ func (f *fakeTail) Services(context.Context) (map[string]ServiceDefinition, erro
 	}
 	return copy, nil
 }
-func (f *fakeTail) Listen(_ context.Context, name string) (net.Listener, error) {
+func (f *fakeTail) Listen(_ context.Context, rule Rule) (net.Listener, error) {
+	name := rule.Name
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.listenFailure == name {
+		if f.listenFailureOnce {
+			f.listenFailure = ""
+			f.listenFailureOnce = false
+		}
 		return nil, errors.New("injected listener failure")
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -180,22 +186,23 @@ type fakeRegistry struct {
 	failure bool
 }
 
-func (f *fakeRegistry) Ensure(_ context.Context, tailnet, name string, create bool) error {
+func (f *fakeRegistry) Ensure(_ context.Context, tailnet string, rule Rule) error {
+	name, create := rule.Name, rule.CreateService
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, map[string]any{"tailnet": tailnet, "name": name, "create": create})
+	f.calls = append(f.calls, map[string]any{"tailnet": tailnet, "name": name, "create": create, "ports": []string{rule.ServicePort()}})
 	if f.failure {
 		return errors.New("TAILSCALE_API_KEY 无效、已过期或没有当前 tailnet 的 Services 权限")
 	}
 	f.tail.mu.Lock()
 	defer f.tail.mu.Unlock()
 	if def, ok := f.tail.defs["svc:"+name]; ok {
-		return compatiblePorts(def.Ports)
+		return compatiblePorts(def.Ports, rule.ServicePort())
 	}
 	if !create {
 		return errors.New("Service 尚未定义")
 	}
-	f.tail.defs["svc:"+name] = ServiceDefinition{Name: "svc:" + name, Ports: []string{"tcp:443"}, Tags: []string{"tag:ztail-service"}}
+	f.tail.defs["svc:"+name] = ServiceDefinition{Name: "svc:" + name, Ports: []string{rule.ServicePort()}, Tags: []string{"tag:ztail-service"}}
 	return nil
 }
 func testConfig(dir string) Config {
@@ -358,10 +365,10 @@ func TestTailscaleAPINeverOverwrites(t *testing.T) {
 	a := NewTailscaleAPI(Config{TailscaleKey: "fixture-api"})
 	a.endpoint = server.URL
 	ctx := context.Background()
-	if a.Ensure(ctx, "fixture-tailnet", "grafana", false) == nil {
+	if a.Ensure(ctx, "fixture-tailnet", Rule{Name: "grafana", Protocol: "http"}) == nil {
 		t.Fatal("undefined accepted")
 	}
-	if err := a.Ensure(ctx, "fixture-tailnet", "grafana", true); err != nil {
+	if err := a.Ensure(ctx, "fixture-tailnet", Rule{Name: "grafana", Protocol: "http", CreateService: true}); err != nil {
 		t.Fatal(err)
 	}
 	if events[len(events)-1] != "PUT /tailnet/fixture-tailnet/vip-services/svc:grafana" {
@@ -370,7 +377,7 @@ func TestTailscaleAPINeverOverwrites(t *testing.T) {
 	for _, m := range []string{"existing", "incompatible", "invalid", "node-name"} {
 		mode = m
 		before := len(events)
-		err := a.Ensure(ctx, "fixture-tailnet", "grafana", true)
+		err := a.Ensure(ctx, "fixture-tailnet", Rule{Name: "grafana", Protocol: "http", CreateService: true})
 		if (m == "existing") != (err == nil) {
 			t.Fatal(m, err)
 		}

@@ -26,13 +26,23 @@ import type {
   ZeaburService,
 } from "./main";
 import { PolicyError } from "./policy-guide";
+import {
+  accessPreview,
+  connectionAddress,
+  isWebAddress,
+  publicPort,
+} from "./rule-helpers";
 
-const webPort = (p: ServicePort) =>
-  ["HTTP", "HTTPS"].includes(p.type.toUpperCase()) &&
+const supportedPort = (p: ServicePort) =>
+  ["HTTP", "HTTPS", "TCP"].includes(p.type.toUpperCase()) &&
   p.port > 0 &&
   p.port <= 65535;
 const protocol = (p: ServicePort): Rule["protocol"] =>
-  p.type.toUpperCase() === "HTTPS" ? "https" : "http";
+  p.type.toUpperCase() === "TCP"
+    ? "tcp"
+    : p.type.toUpperCase() === "HTTPS"
+      ? "https"
+      : "http";
 const deploymentStates: Record<string, string> = {
   RUNNING: "运行中",
   STOPPED: "已停止",
@@ -78,6 +88,7 @@ function draftFor(
     host: "",
     protocol: port ? protocol(port) : "http",
     port: port?.port || 0,
+    publishPort: port && protocol(port) === "tcp" ? port.port : 443,
     enabled: false,
     createService: !!config?.apiKeyConfigured,
     revision: 0,
@@ -164,7 +175,7 @@ export function ServiceCatalog(props: Props) {
         (m, s) =>
           m +
           Object.values(s.environments || {}).reduce(
-            (k, d) => k + d.ports.filter(webPort).length,
+            (k, d) => k + d.ports.filter(supportedPort).length,
             0,
           ),
         0,
@@ -190,6 +201,7 @@ export function ServiceCatalog(props: Props) {
               host: "",
               protocol: "http",
               port: 80,
+              publishPort: 443,
               enabled: false,
               createService: false,
               revision: 0,
@@ -211,7 +223,7 @@ export function ServiceCatalog(props: Props) {
         </span>
         <span>
           <Globe size={18} />
-          <strong>{ports}</strong> Web 端口
+          <strong>{ports}</strong> 可发布端口
         </span>
       </div>
       <div className="catalog-server">
@@ -364,7 +376,7 @@ export function ServiceCatalog(props: Props) {
         </div>
       )}
       <p className="footnote">
-        端口来自所选环境。HTTP/HTTPS 支持快捷发布；TCP/UDP
+        端口来自所选环境。HTTP/HTTPS 和 TCP 支持快捷发布；UDP
         展示供参考。发布前可修改访问名称，审批和访问权限遵循 tailnet 策略。
       </p>
     </>
@@ -394,7 +406,8 @@ function ServiceRow({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const ports = details?.ports || [];
-  const publishable = details && !details.error ? ports.filter(webPort) : [];
+  const publishable =
+    details && !details.error ? ports.filter(supportedPort) : [];
   const status = details?.status;
   const serviceRules = rules.filter(
     (r) =>
@@ -429,7 +442,7 @@ function ServiceRow({
           {ports.length ? (
             ports.map((p) => (
               <span
-                className={"port-chip mono " + (webPort(p) ? "web" : "")}
+                className={"port-chip mono " + (supportedPort(p) ? "web" : "")}
                 key={p.id + p.port}
               >
                 {p.type} :{p.port}
@@ -480,22 +493,29 @@ function ServiceRow({
               </span>
               <button onClick={() => onManage(rule.id)}>
                 管理
-                {ports.filter(webPort).length > 1 || serviceRules.length > 1
+                {ports.filter(supportedPort).length > 1 ||
+                serviceRules.length > 1
                   ? " " + rule.port
                   : "发布"}
               </button>
-              {(rule.status.state === "advertised" ||
-                rule.status.activeUrl) && (
-                <a
-                  className="mono"
-                  href={rule.status.activeUrl || rule.status.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {rule.name}
-                  <ArrowUpRight size={12} />
-                </a>
-              )}
+              {(rule.status.state === "advertised" || rule.status.activeUrl) &&
+                (isWebAddress(rule.status.activeUrl || rule.status.url) ? (
+                  <a
+                    className="mono"
+                    href={rule.status.activeUrl || rule.status.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {rule.name}
+                    <ArrowUpRight size={12} />
+                  </a>
+                ) : (
+                  <span className="mono">
+                    {connectionAddress(
+                      rule.status.activeUrl || rule.status.url,
+                    )}
+                  </span>
+                ))}
               {rule.status.error && (
                 <span className="row-error">
                   <PolicyError
@@ -599,10 +619,32 @@ function ServiceRow({
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             />
             <span className="mono domain-preview">
-              https://{draft.name || "<名称>"}.
-              {tail?.dnsSuffix || "<tailnet>.ts.net"}
+              {accessPreview(draft, tail?.dnsSuffix)}
             </span>
           </div>
+          {draft.protocol === "tcp" && (
+            <div className="field">
+              <label htmlFor={"publish-port-" + service._id + environment._id}>
+                发布端口
+              </label>
+              <input
+                id={"publish-port-" + service._id + environment._id}
+                type="number"
+                min={1}
+                max={65535}
+                required
+                disabled={busy}
+                value={draft.publishPort}
+                onChange={(e) =>
+                  setDraft({ ...draft, publishPort: Number(e.target.value) })
+                }
+              />
+              <p className="help">
+                使用对应客户端连接此端口，转发到后端 {draft.port}
+                。完整配置中可测试后端连接。
+              </p>
+            </div>
+          )}
           {nameConflict && (
             <p className="row-error" role="alert">
               此名称已被使用，请使用另一个名称。
@@ -628,7 +670,8 @@ function ServiceRow({
           ) : (
             <p className="help">
               请先在 Tailscale 控制台定义{" "}
-              <code>svc:{draft.name || "<名称>"}</code>（tcp:443）。
+              <code>svc:{draft.name || "<名称>"}</code>（tcp:{publicPort(draft)}
+              ）。
             </p>
           )}
           {tail?.state !== "Running" && (

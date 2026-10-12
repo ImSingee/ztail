@@ -17,6 +17,12 @@ import {
   Trash2,
 } from "lucide-react";
 import { ServiceCatalog } from "./catalog";
+import {
+  accessPreview,
+  connectionAddress,
+  isWebAddress,
+  publicPort,
+} from "./rule-helpers";
 import { PolicyError, PolicyGuide, PublishedAccessHelp } from "./policy-guide";
 import "./style.css";
 
@@ -68,8 +74,9 @@ export type Rule = {
   environmentId: string;
   serviceId: string;
   host: string;
-  protocol: "http" | "https";
+  protocol: "http" | "https" | "tcp";
   port: number;
+  publishPort: number;
   enabled: boolean;
   createService: boolean;
   revision: number;
@@ -94,7 +101,11 @@ export type Config = {
   serviceTag: string;
   clusterDomain: string;
   apiKeyConfigured: boolean;
-  policy: unknown;
+  policy: {
+    tagOwners: Record<string, string[]>;
+    autoApprovers: { services: Record<string, string[]> };
+    grants: { src: string[]; dst: string[]; ip: string[] }[];
+  };
   withdrawalErrors: string[];
 };
 type Session = { authenticated: boolean; csrfToken: string; version?: string };
@@ -131,6 +142,7 @@ function ruleData(r: Rule): Rule {
     host: r.host,
     protocol: r.protocol,
     port: r.port,
+    publishPort: publicPort(r),
     enabled: r.enabled,
     createService: r.createService,
     revision: r.revision,
@@ -147,6 +159,7 @@ const blank: Rule = {
   host: "",
   protocol: "http",
   port: 80,
+  publishPort: 443,
   enabled: false,
   createService: false,
   revision: 0,
@@ -490,7 +503,7 @@ function App() {
               <div>
                 <h1>已发布</h1>
                 <p className="muted">
-                  选择后端服务，以独立的 HTTPS 名称发布到 tailnet。
+                  选择 Web 或 TCP 后端，以独立的名称发布到 tailnet。
                 </p>
               </div>
               <button
@@ -569,20 +582,25 @@ function App() {
                       </a>
                       <div className="url-line">
                         <span className="mono">
-                          {r.status.url || "加入 tailnet 后生成访问地址"}
+                          {connectionAddress(r.status.url) ||
+                            "加入 tailnet 后生成访问地址"}
                         </span>
                         {r.status.url && (
                           <>
-                            <CopyButton value={r.status.url} />
-                            <a
-                              className="icon-button"
-                              href={r.status.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              aria-label={"访问 " + r.name}
-                            >
-                              <ArrowUpRight size={16} />
-                            </a>
+                            <CopyButton
+                              value={connectionAddress(r.status.url)}
+                            />
+                            {isWebAddress(r.status.url) && (
+                              <a
+                                className="icon-button"
+                                href={r.status.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                aria-label={"访问 " + r.name}
+                              >
+                                <ArrowUpRight size={16} />
+                              </a>
+                            )}
                           </>
                         )}
                       </div>
@@ -599,7 +617,9 @@ function App() {
                         }
                       >
                         {r.status.backend === "reachable"
-                          ? "后端可达"
+                          ? r.protocol === "tcp"
+                            ? "TCP 端口可连接"
+                            : "后端可达"
                           : r.status.backend === "unreachable"
                             ? "后端不可达"
                             : "尚未检测"}
@@ -628,7 +648,7 @@ function App() {
                           </div>
                           {r.status.activeUrl && (
                             <div className="status-note mono target">
-                              当前入口：{r.status.activeUrl}
+                              当前入口：{connectionAddress(r.status.activeUrl)}
                               <br />
                               当前后端：{r.status.activeTarget}
                             </div>
@@ -782,7 +802,14 @@ function Editor({
   onSaved: () => Promise<void>;
   backLabel?: string;
 }) {
-  const [form, setForm] = useState({ ...initial }),
+  const [form, setForm] = useState({
+      ...initial,
+      publishPort: publicPort(initial),
+    }),
+    [publishPortEdited, setPublishPortEdited] = useState(
+      !!initial.id ||
+        (initial.protocol === "tcp" && publicPort(initial) !== initial.port),
+    ),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [probe, setProbe] = useState(""),
@@ -791,7 +818,17 @@ function Editor({
   const cat = localCatalog || catalog,
     project = cat?.projects.find((p) => p._id === form.projectId);
   const update = <K extends keyof Rule>(key: K, value: Rule[K]) => {
-    setForm((f) => ({ ...f, [key]: value }));
+    if (key === "publishPort") setPublishPortEdited(true);
+    if (key === "protocol") setPublishPortEdited(!!form.id);
+    setForm((f) => ({
+      ...f,
+      [key]: value,
+      ...(key === "protocol"
+        ? { publishPort: value === "tcp" ? f.port : 443 }
+        : key === "port" && f.protocol === "tcp" && !publishPortEdited
+          ? { publishPort: Number(value) }
+          : {}),
+    }));
     setProbe("");
   };
   const save = async (enabled: boolean) => {
@@ -849,11 +886,26 @@ function Editor({
           <p className="help">小写字母、数字和连字符，首尾不能为连字符。</p>
           <div className="domain-preview">
             <ShieldCheck size={17} />
-            <span className="mono">
-              https://{form.name || "<名称>"}.
-              {tail?.dnsSuffix || "<tailnet>.ts.net"}
-            </span>
+            <span className="mono">{accessPreview(form, tail?.dnsSuffix)}</span>
           </div>
+          {form.protocol === "tcp" && (
+            <div className="field">
+              <label htmlFor="publish-port">发布端口</label>
+              <input
+                id="publish-port"
+                type="number"
+                min={1}
+                max={65535}
+                required
+                value={form.publishPort}
+                onChange={(e) => update("publishPort", Number(e.target.value))}
+              />
+              <p className="help">
+                客户端使用此端口连接；后端端口可独立设置。使用数据库等对应客户端访问，TCP
+                数据原样转发。
+              </p>
+            </div>
+          )}
         </section>
         <section className="form-section">
           <div className="section-title">
@@ -986,6 +1038,7 @@ function Editor({
               >
                 <option value="http">HTTP</option>
                 <option value="https">HTTPS（验证证书）</option>
+                <option value="tcp">TCP（原样转发）</option>
               </select>
             </div>
             <div className="field">
@@ -1017,7 +1070,11 @@ function Editor({
                     form,
                   );
                   setProbe(
-                    res.state === "reachable" ? "后端可达" : "后端不可达",
+                    res.state === "reachable"
+                      ? form.protocol === "tcp"
+                        ? "TCP 端口可连接（未验证应用协议）"
+                        : "后端可达"
+                      : "后端不可达",
                   );
                 } catch (e) {
                   setError((e as Error).message);
@@ -1051,7 +1108,7 @@ function Editor({
             <p className="help">
               未配置 TAILSCALE_API_KEY。请先在 Tailscale 控制台定义{" "}
               <code>svc:{form.name || "<名称>"}</code>，端口为{" "}
-              <code>tcp:443</code>，再发布此规则。
+              <code>tcp:{publicPort(form)}</code>，再发布此规则。
             </p>
           )}
           <p className="help">

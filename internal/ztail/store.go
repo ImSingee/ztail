@@ -28,6 +28,7 @@ type Rule struct {
 	Host          string `json:"host"`
 	Protocol      string `json:"protocol"`
 	Port          int    `json:"port"`
+	PublishPort   int    `json:"publishPort"`
 	Enabled       bool   `json:"enabled"`
 	CreateService bool   `json:"createService"`
 	Revision      int64  `json:"revision"`
@@ -38,11 +39,17 @@ func (r Rule) Validate() error {
 	if !labelPattern.MatchString(r.Name) {
 		return errors.New("名称需为 1–63 位小写字母、数字或连字符，首尾不能为连字符")
 	}
-	if r.Protocol != "http" && r.Protocol != "https" {
-		return errors.New("后端协议必须为 HTTP 或 HTTPS")
+	if r.Protocol != "http" && r.Protocol != "https" && r.Protocol != "tcp" {
+		return errors.New("后端协议必须为 HTTP、HTTPS 或 TCP")
 	}
 	if r.Port < 1 || r.Port > 65535 {
 		return errors.New("端口必须在 1–65535 之间")
+	}
+	if r.PublishPort < 0 || r.PublishPort > 65535 || (r.Protocol == "tcp" && r.PublishPort == 0) {
+		return errors.New("发布端口必须在 1–65535 之间")
+	}
+	if r.Protocol != "tcp" && r.PublicPort() != 443 {
+		return errors.New("HTTP/HTTPS 服务的发布端口必须为 443")
 	}
 	switch r.Source {
 	case "zeabur":
@@ -68,6 +75,34 @@ func (r Rule) Validate() error {
 		return errors.New("请选择后端来源")
 	}
 	return nil
+}
+
+// PublicPort preserves pre-TCP rules, which have no publishPort in their JSON.
+func (r Rule) PublicPort() int {
+	if r.PublishPort != 0 {
+		return r.PublishPort
+	}
+	if r.Protocol == "tcp" {
+		return r.Port
+	}
+	return 443
+}
+
+func (r Rule) ServicePort() string { return "tcp:" + strconv.Itoa(r.PublicPort()) }
+
+func (r Rule) AccessURL(suffix string) string {
+	if suffix == "" {
+		return ""
+	}
+	host := r.Name + "." + suffix
+	if r.Protocol == "tcp" {
+		return "tcp://" + net.JoinHostPort(host, strconv.Itoa(r.PublicPort()))
+	}
+	return "https://" + host
+}
+
+func (r Rule) SameListener(other Rule) bool {
+	return r.Name == other.Name && r.PublicPort() == other.PublicPort() && (r.Protocol == "tcp") == (other.Protocol == "tcp")
 }
 func (r Rule) Target(domain string) *url.URL {
 	host := r.Host
@@ -136,6 +171,9 @@ func (s *Store) Save(r Rule) (Rule, error) {
 	if err := r.Validate(); err != nil {
 		return r, err
 	}
+	// Save the selected public port so changing a TCP backend's port does not
+	// silently move the published endpoint.
+	r.PublishPort = r.PublicPort()
 	tx, err := s.db.Begin()
 	if err != nil {
 		return r, err

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -224,6 +225,14 @@ func (a *App) tailStatus(ctx context.Context) TailStatus {
 	return st
 }
 func (a *App) settings(w http.ResponseWriter, r *http.Request) {
+	ports := []string{"tcp:443"}
+	if rules, err := a.Store.List(); err == nil {
+		for _, rule := range rules {
+			if rule.Protocol == "tcp" && !slices.Contains(ports, rule.ServicePort()) {
+				ports = append(ports, rule.ServicePort())
+			}
+		}
+	}
 	jsonResponse(w, 200, map[string]any{
 		"serverId": a.Config.ServerID, "nodeTag": a.Config.NodeTag(), "serviceTag": "tag:ztail-service",
 		"clusterDomain": a.Config.ClusterDomain, "apiKeyConfigured": a.Config.TailscaleKey != "", "withdrawalErrors": a.Manager.WithdrawalErrors(),
@@ -231,7 +240,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 			"tagOwners":     map[string][]string{a.Config.NodeTag(): {"autogroup:admin"}, "tag:ztail-service": {"autogroup:admin"}},
 			"autoApprovers": map[string]any{"services": map[string][]string{"tag:ztail-service": {a.Config.NodeTag()}}},
 			"grants": []any{
-				map[string]any{"src": []string{"autogroup:member", a.Config.NodeTag()}, "dst": []string{"tag:ztail-service"}, "ip": []string{"tcp:443"}},
+				map[string]any{"src": []string{"autogroup:member", a.Config.NodeTag()}, "dst": []string{"tag:ztail-service"}, "ip": ports},
 				map[string]any{"src": []string{"autogroup:member"}, "dst": []string{a.Config.NodeTag()}, "ip": []string{"tcp:443"}},
 			},
 		},
@@ -317,7 +326,14 @@ func (a *App) probe(w http.ResponseWriter, r *http.Request) {
 	if state == "unreachable" {
 		status = 502
 	}
-	jsonResponse(w, status, map[string]any{"state": state, "target": rule.Target(a.Config.ClusterDomain).String(), "error": map[bool]string{true: "后端不可达，请检查地址、端口和 TLS 证书", false: ""}[status != 200]})
+	message := ""
+	if status != 200 {
+		message = "后端不可达，请检查地址、端口和 TLS 证书"
+		if rule.Protocol == "tcp" {
+			message = "TCP 后端不可达，请检查地址、端口和集群网络"
+		}
+	}
+	jsonResponse(w, status, map[string]any{"state": state, "target": rule.Target(a.Config.ClusterDomain).String(), "error": message})
 }
 func (a *App) decode(w http.ResponseWriter, r *http.Request, out any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)

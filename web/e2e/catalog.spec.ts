@@ -198,7 +198,7 @@ test("inline publishing uses the selected environment and port, manages existing
   ).toBeVisible();
   await capture(page, "catalog-published-stale");
   await production
-    .getByRole("button", { name: "管理发布", exact: true })
+    .getByRole("button", { name: "管理 3000", exact: true })
     .click();
   await expect(page.getByLabel("Service 名称", { exact: true })).toHaveValue(
     "grafana",
@@ -208,7 +208,7 @@ test("inline publishing uses the selected environment and port, manages existing
     JSON.stringify({ before, published, both }, null, 2),
   );
 });
-test("non-Web and stale ports are explicit, stale open forms cannot publish and errors stay actionable", async ({
+test("unsupported and stale ports are explicit, stale open forms cannot publish and errors stay actionable", async ({
   page,
   request,
 }) => {
@@ -217,9 +217,18 @@ test("non-Web and stale ports are explicit, stale open forms cannot publish and 
     name: "Redis · Production",
     exact: true,
   });
-  await expect(redis.getByRole("button", { name: /发布/ })).toHaveCount(0);
-  await redis.getByRole("button", { name: "手动配置", exact: true }).click();
-  await expect(page.getByLabel("后端端口", { exact: true })).toHaveValue("0");
+  await expect(redis.getByRole("button", { name: /发布/ })).toHaveCount(1);
+  await page
+    .getByRole("button", { name: "发布 Redis 6379 · Production", exact: true })
+    .click();
+  await expect(page.getByLabel("发布端口", { exact: true })).toHaveValue(
+    "6379",
+  );
+  await page.getByRole("button", { name: "完整配置", exact: true }).click();
+  await expect(page.getByLabel("后端端口", { exact: true })).toHaveValue(
+    "6379",
+  );
+  await expect(page.getByLabel("后端协议", { exact: true })).toHaveValue("tcp");
   await expect(page.getByLabel("环境", { exact: true })).toHaveValue(
     "env-first",
   );

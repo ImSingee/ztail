@@ -21,7 +21,7 @@ func TestTailscaleAPICreationError(t *testing.T) {
 	defer server.Close()
 	a := NewTailscaleAPI(Config{TailscaleKey: "fixture-api"})
 	a.endpoint = server.URL
-	err := a.Ensure(context.Background(), "fixture-tailnet", "new-service", true)
+	err := a.Ensure(context.Background(), "fixture-tailnet", Rule{Name: "new-service", Protocol: "http", CreateService: true})
 	if puts != 1 || err == nil || !strings.Contains(err.Error(), "HTTP 400: invalid service tags") {
 		t.Fatal("creation error explanation lost", puts, err)
 	}
