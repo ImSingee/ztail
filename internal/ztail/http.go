@@ -32,14 +32,18 @@ type App struct {
 	mu       sync.Mutex
 	attempts map[string]attempt
 	cancel   context.CancelFunc
+	panel    *nodePanel
 }
 
 func NewApp(c Config, s *Store, z CatalogProvider, t Tailnet, registry Registry, assets fs.FS) *App {
-	return &App{Config: c, Store: s, Catalog: z, Tail: t, Manager: NewManager(c, s, z, t, registry), Assets: assets, Version: "dev", attempts: map[string]attempt{}}
+	a := &App{Config: c, Store: s, Catalog: z, Tail: t, Manager: NewManager(c, s, z, t, registry), Assets: assets, Version: "dev", attempts: map[string]attempt{}}
+	a.panel = newNodePanel(t, c, a.Handler())
+	return a
 }
 func (a *App) Start(ctx context.Context) {
 	ctx, a.cancel = context.WithCancel(ctx)
 	a.Manager.Start(ctx)
+	a.panel.start(ctx)
 	go func() {
 		_ = a.Catalog.Refresh(ctx)
 		a.Manager.Wake()
@@ -60,6 +64,7 @@ func (a *App) Close() {
 	if a.cancel != nil {
 		a.cancel()
 	}
+	a.panel.close()
 	a.Manager.Close()
 	_ = a.Tail.Close()
 	_ = a.Store.Close()
@@ -82,7 +87,7 @@ func (a *App) Handler() http.Handler {
 		a.Manager.Wake()
 		jsonResponse(w, 200, a.Catalog.Catalog())
 	})))
-	mux.Handle("GET /api/tailscale", a.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, 200, a.Tail.Status(r.Context())) })))
+	mux.Handle("GET /api/tailscale", a.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, 200, a.tailStatus(r.Context())) })))
 	mux.Handle("POST /api/tailscale/connect", a.auth(http.HandlerFunc(a.connect)))
 	mux.Handle("GET /api/rules", a.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v, err := a.Manager.Views()
@@ -208,8 +213,29 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "ztail_session", Path: "/", MaxAge: -1, HttpOnly: true, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", SameSite: http.SameSiteStrictMode})
 	jsonResponse(w, 200, map[string]bool{"authenticated": false})
 }
+func (a *App) tailStatus(ctx context.Context) TailStatus {
+	st := a.Tail.Status(ctx)
+	if st.State == "Running" && st.MagicDNS && st.HTTPS && st.DNSName != "" {
+		st.PanelURL, st.PanelError = a.panel.status()
+		if st.PanelURL != "https://"+st.DNSName {
+			st.PanelURL = ""
+		}
+	}
+	return st
+}
 func (a *App) settings(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, 200, map[string]any{"serverId": a.Config.ServerID, "nodeTag": a.Config.NodeTag(), "serviceTag": "tag:ztail-service", "clusterDomain": a.Config.ClusterDomain, "apiKeyConfigured": a.Config.TailscaleKey != "", "withdrawalErrors": a.Manager.WithdrawalErrors(), "policy": map[string]any{"tagOwners": map[string][]string{a.Config.NodeTag(): {"autogroup:admin"}, "tag:ztail-service": {"autogroup:admin"}}, "autoApprovers": map[string]any{"services": map[string][]string{"tag:ztail-service": {a.Config.NodeTag()}}}, "grants": []any{map[string]any{"src": []string{"autogroup:member", a.Config.NodeTag()}, "dst": []string{"tag:ztail-service"}, "ip": []string{"tcp:443"}}}}})
+	jsonResponse(w, 200, map[string]any{
+		"serverId": a.Config.ServerID, "nodeTag": a.Config.NodeTag(), "serviceTag": "tag:ztail-service",
+		"clusterDomain": a.Config.ClusterDomain, "apiKeyConfigured": a.Config.TailscaleKey != "", "withdrawalErrors": a.Manager.WithdrawalErrors(),
+		"policy": map[string]any{
+			"tagOwners":     map[string][]string{a.Config.NodeTag(): {"autogroup:admin"}, "tag:ztail-service": {"autogroup:admin"}},
+			"autoApprovers": map[string]any{"services": map[string][]string{"tag:ztail-service": {a.Config.NodeTag()}}},
+			"grants": []any{
+				map[string]any{"src": []string{"autogroup:member", a.Config.NodeTag()}, "dst": []string{"tag:ztail-service"}, "ip": []string{"tcp:443"}},
+				map[string]any{"src": []string{"autogroup:member"}, "dst": []string{a.Config.NodeTag()}, "ip": []string{"tcp:443"}},
+			},
+		},
+	})
 }
 func (a *App) connect(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -224,6 +250,10 @@ func (a *App) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Manager.Wake()
+	select {
+	case a.panel.wake <- struct{}{}:
+	default:
+	}
 	jsonResponse(w, 202, map[string]bool{"started": true})
 }
 func (a *App) saveRule(w http.ResponseWriter, r *http.Request) {

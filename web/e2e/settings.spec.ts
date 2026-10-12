@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { test, expect, Page } from "@playwright/test";
+import { test, expect, Page, request as apiRequest } from "@playwright/test";
 
 const assets = process.env.ZTAIL_EVIDENCE_DIR || "test-results/evidence";
 mkdirSync(assets, { recursive: true });
@@ -399,5 +399,143 @@ test("authorized cold-load prioritizes node status and retains quiet policy refe
       null,
       2,
     ),
+  );
+});
+
+test("node HTTPS address uses actual DNS name, opens the panel, and wraps on mobile", async ({
+  page,
+  context,
+}) => {
+  await login(page);
+  await expect(page.getByText("连接后可用", { exact: true })).toBeVisible();
+  await page.request.get("/fixture/authorize");
+  await page.reload();
+  const nodeLink = page.locator(".node-settings a.mono");
+  await expect(nodeLink).toHaveAttribute(
+    "href",
+    "https://ztail.fixture.ts.net",
+  );
+  const original = await (await page.request.get("/api/tailscale")).json();
+  expect(original.dnsName).toBe("ztail.fixture.ts.net");
+  expect(original.panelUrl).toBe("https://" + original.dnsName);
+  await page.request.get("/fixture/auth-state?state=panel-renamed");
+  await page.reload();
+  const address = "https://ztail-renamed-with-a-long-node-name.fixture.ts.net";
+  await expect(nodeLink).toHaveAttribute("href", address);
+  await expect(nodeLink).toHaveText(address);
+  const renamed = await (await page.request.get("/api/tailscale")).json();
+  expect(renamed.hostname).toBe("ztail");
+  expect(renamed.panelUrl).toBe("https://" + renamed.dnsName);
+  const audit = await (await page.request.get("/fixture/audit")).json();
+  expect(audit.ads).toEqual([]);
+  expect(audit.rules).toEqual([]);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await capture(page, "node-panel-address-desktop");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await capture(page, "node-panel-address-mobile");
+  // Browser-only DNS routing fixture: the popup uses the advertised origin,
+  // while requests reach the panel owner's real HTTP handler on loopback.
+  // Trusted TLS and Service VIP transport are proven separately by the SDK case.
+  const nodeRequests = await apiRequest.newContext();
+  await context.route(/https:\/\/[^/]+\.fixture\.ts\.net\//, async (route) => {
+    const requestURL = new URL(route.request().url());
+    const headers = {
+      ...route.request().headers(),
+      host: requestURL.host,
+      cookie: route.request().headers().cookie || "",
+    };
+    const response = await nodeRequests.fetch(
+      audit.panelAddress + requestURL.pathname + requestURL.search,
+      {
+        method: route.request().method(),
+        headers,
+        data: route.request().postDataBuffer() || undefined,
+      },
+    );
+    await route.fulfill({ response });
+  });
+  const opened = page.waitForEvent("popup");
+  await nodeLink.click();
+  const popup = await opened;
+  await expect(popup.getByLabel("管理员密码", { exact: true })).toBeVisible();
+  expect(popup.url()).toBe(address + "/");
+  expect(await popup.evaluate(() => window.opener)).toBeNull();
+  await capture(popup, "node-panel-password-entry");
+  await popup
+    .getByLabel("管理员密码", { exact: true })
+    .fill("fixture-password");
+  await popup.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(
+    popup.getByRole("heading", { name: "Zeabur 服务", exact: true }),
+  ).toBeVisible();
+  writeFileSync(
+    `${assets}/node-panel-address-audit.json`,
+    JSON.stringify(
+      {
+        original,
+        renamed,
+        href: address,
+        popupURL: popup.url(),
+        panelAddress: audit.panelAddress,
+        advertisements: audit.ads,
+        rules: audit.rules,
+        browserRouting:
+          "DNS route to loopback HTTP panel fixture; real tsnet HTTPS verified separately",
+      },
+      null,
+      2,
+    ),
+  );
+  await popup.close();
+  await context.unrouteAll({ behavior: "wait" });
+  await nodeRequests.dispose();
+});
+
+test("node panel shows HTTPS prerequisite and listener error without a false link", async ({
+  page,
+}) => {
+  await login(page);
+  await page.request.get("/fixture/authorize");
+  await page.reload();
+  const nodeLink = page.locator(".node-settings a.mono");
+  await expect(nodeLink).toHaveAttribute(
+    "href",
+    "https://ztail.fixture.ts.net",
+  );
+  await page.request.get("/fixture/auth-state?state=panel-no-https");
+  await page.reload();
+  await expect(
+    page.getByText("请开启 MagicDNS 和 HTTPS", { exact: true }),
+  ).toBeVisible();
+  await expect(nodeLink).toHaveCount(0);
+  const disabled = await (await page.request.get("/api/tailscale")).json();
+  expect(disabled.panelUrl).toBe("");
+  await capture(page, "node-panel-https-disabled");
+  await page.request.get("/fixture/authorize");
+  await page.request.get("/fixture/auth-state?state=panel-error");
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get("/api/tailscale")).json()).panelError,
+    )
+    .toContain("listener failure");
+  await page.reload();
+  await expect(nodeLink).toHaveCount(0);
+  await expect(
+    page.getByText("暂不可用，正在重试", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "面板 HTTPS 入口" }),
+  ).toContainText("injected panel listener failure");
+  await capture(page, "node-panel-listener-error");
+  const failed = await (await page.request.get("/api/tailscale")).json();
+  writeFileSync(
+    `${assets}/node-panel-unavailable-audit.json`,
+    JSON.stringify({ disabled, failed }, null, 2),
   );
 });

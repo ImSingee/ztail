@@ -11,6 +11,7 @@ tailnet 设备 → https://grafana.<tailnet>.ts.net
             → ztail（tsnet / HTTPS）→ 集群 Service:端口
 
 Zeabur HTTPS 域名 → 管理面板（管理员密码）
+tailnet 设备 → https://ztail.<tailnet>.ts.net → 同一管理面板（管理员密码）
 ```
 
 ## 配置
@@ -37,6 +38,8 @@ Zeabur HTTPS 域名 → 管理面板（管理员密码）
 镜像由 GitHub Actions 发布到 `ghcr.io/imsingee/ztail`。首次使用前，确认构建任务成功且镜像包可公开拉取。模板文件尚未注册公共模板编号。
 
 登录后在「连接设置」中通过 **交互式授权** 或 **Auth Key** 加入 tailnet。Auth Key 接入成功后不持久化；节点重启依靠 `/data/tailscale` 中的身份恢复。
+
+节点连接且 MagicDNS / HTTPS 已开启后，ztail 自动在节点自身监听 HTTPS 443，连接设置显示实际节点的面板访问地址（节点重名时可能不是 `ztail`）。证书由 Tailscale 自动获取，访问仍需管理员密码。此入口不需要创建 Service、不占用已有 Service 的 443，也不需要映射容器/宿主机的 443。首次授权继续使用 Zeabur 域名或原管理面板入口。
 
 ### Kubernetes
 
@@ -93,12 +96,19 @@ docker run --rm -p 8080:8080 -v ztail-data:/data \
       "src": ["autogroup:member", "tag:ztail"],
       "dst": ["tag:ztail-service"],
       "ip": ["tcp:443"]
+    },
+    {
+      "src": ["autogroup:member"],
+      "dst": ["tag:ztail"],
+      "ip": ["tcp:443"]
     }
   ]
 }
 ```
 
 这是合并片段，不应替换已有的完整策略。访问来源按你的团队需求调整；保留节点 tag 的读取/访问权限，供无 API Key 模式核验可见 Service。ztail 不修改全局策略，也不提供 OAuth。
+
+第二条 grant 允许成员访问节点自身的管理面板。已有部署需要合并这条规则；允许访问 `tag:ztail-service` 的规则不会自动允许访问 `tag:ztail` 节点。自定义节点 tag 时使用实际配置值。
 
 ### 不配置 Tailscale API Key
 

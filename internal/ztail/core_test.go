@@ -54,15 +54,18 @@ func (f *fakeCatalog) Contains(r Rule) bool {
 }
 
 type fakeTail struct {
-	mu              sync.Mutex
-	state           TailStatus
-	defs            map[string]ServiceDefinition
-	listeners       map[string]net.Listener
-	ads             map[string]bool
-	connects        []map[string]any
-	listenCount     int
-	withdrawFailure bool
-	listenFailure   string
+	mu               sync.Mutex
+	state            TailStatus
+	defs             map[string]ServiceDefinition
+	listeners        map[string]net.Listener
+	ads              map[string]bool
+	connects         []map[string]any
+	listenCount      int
+	withdrawFailure  bool
+	listenFailure    string
+	panelListener    net.Listener
+	panelFailure     bool
+	panelListenCount int
 }
 
 func newFakeTail(tag string) *fakeTail {
@@ -76,7 +79,7 @@ func (f *fakeTail) Status(context.Context) TailStatus {
 func (f *fakeTail) authorize(tag string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.state = TailStatus{State: "Running", Tailnet: "fixture-tailnet", DNSSuffix: "fixture.ts.net", Hostname: "ztail", NodeID: "fixture-node", Tags: []string{tag}, IPs: []string{"100.64.0.10"}, MagicDNS: true, HTTPS: true}
+	f.state = TailStatus{State: "Running", Tailnet: "fixture-tailnet", DNSSuffix: "fixture.ts.net", Hostname: "ztail", DNSName: "ztail.fixture.ts.net", NodeID: "fixture-node", Tags: []string{tag}, IPs: []string{"100.64.0.10"}, MagicDNS: true, HTTPS: true}
 }
 func (f *fakeTail) Connect(_ context.Context, method, key string) error {
 	f.mu.Lock()
@@ -127,6 +130,19 @@ func (f *fakeTail) Withdraw(_ context.Context, name string) error {
 	delete(f.ads, name)
 	return nil
 }
+func (f *fakeTail) ListenPanel(_ context.Context) (net.Listener, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.panelFailure {
+		return nil, errors.New("injected panel listener failure")
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err == nil {
+		f.panelListener = ln
+		f.panelListenCount++
+	}
+	return ln, err
+}
 func (f *fakeTail) Advertisements(context.Context) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -141,6 +157,9 @@ func (f *fakeTail) Close() error {
 	defer f.mu.Unlock()
 	for _, ln := range f.listeners {
 		_ = ln.Close()
+	}
+	if f.panelListener != nil {
+		_ = f.panelListener.Close()
 	}
 	return nil
 }

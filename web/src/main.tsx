@@ -47,6 +47,9 @@ export type Tail = {
   tailnet: string;
   dnsSuffix: string;
   hostname: string;
+  dnsName: string;
+  panelUrl: string;
+  panelError: string;
   nodeId: string;
   tags: string[];
   ips: string[];
@@ -1382,6 +1385,35 @@ function Connection({
               <dd>{tail?.tailnet || "—"}</dd>
               <dt>节点</dt>
               <dd>{tail?.hostname || "ztail"}</dd>
+              <dt>面板 HTTPS 地址</dt>
+              <dd>
+                {tail?.panelUrl ? (
+                  <a
+                    href={tail.panelUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mono"
+                  >
+                    {tail.panelUrl}
+                  </a>
+                ) : !tail ? (
+                  "正在读取…"
+                ) : tail.state !== "Running" ? (
+                  "连接后可用"
+                ) : !tail.magicDns || !tail.https ? (
+                  "请开启 MagicDNS 和 HTTPS"
+                ) : tail.panelError ? (
+                  "暂不可用，正在重试"
+                ) : (
+                  "正在准备 HTTPS 入口…"
+                )}
+                {tail?.panelUrl && (
+                  <p className="help">
+                    通过 tailnet 访问，仍需管理员密码。若无法连接，请检查节点的
+                    TCP 443 访问权限。
+                  </p>
+                )}
+              </dd>
               <dt>配置的 tag</dt>
               <dd className="mono">{config?.nodeTag}</dd>
               <dt>实际 tag</dt>
@@ -1401,6 +1433,11 @@ function Connection({
               </dd>
             </dl>
             <ErrorBox message={tail?.error || ""} />
+            <ErrorBox
+              message={
+                tail?.panelError ? "面板 HTTPS 入口：" + tail.panelError : ""
+              }
+            />
             {healthWarnings.length ? (
               <div className="notice" role="status">
                 Tailscale 健康提示：{healthWarnings.join("；")}
