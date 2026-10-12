@@ -580,11 +580,6 @@ function App() {
                       >
                         {states[r.status.state] || "等待应用"}
                       </span>
-                      {r.status.state === "advertised" && (
-                        <div className="status-note">
-                          审批状态未知 · 以控制台为准
-                        </div>
-                      )}
                       {r.status.error && (
                         <>
                           <div className="row-error">
