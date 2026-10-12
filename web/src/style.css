@@ -258,7 +258,11 @@ pre {
   align-items: center;
   gap: 0.55rem;
 }
-.connection-strip button {
+.connection-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
   margin-left: auto;
 }
 .dot {
@@ -572,9 +576,6 @@ footer {
   font-size: 0.73rem;
   color: var(--muted);
 }
-footer > span:last-child {
-  margin-left: auto;
-}
 .login {
   display: flex;
   justify-content: center;
@@ -720,6 +721,11 @@ footer > span:last-child {
   .connection-strip > span:first-child {
     max-width: 100%;
     overflow-wrap: anywhere;
+  }
+  .connection-actions {
+    width: 100%;
+    justify-content: space-between;
+    gap: 0.5rem;
   }
   .connection-strip > .mono {
     font-size: 0.72rem;
@@ -1207,6 +1213,9 @@ footer > span:last-child {
   background: white;
   overflow: auto;
   overscroll-behavior: contain;
+}
+.access-help {
+  width: 660px;
 }
 .policy-guide::backdrop {
   background: oklch(0.15 0 0 / 0.4);

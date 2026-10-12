@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import {
   ArrowUpRight,
   Check,
@@ -65,22 +71,8 @@ function CopyValue({ value, label }: { value: string; label: string }) {
   );
 }
 
-export function PolicyGuide({
-  rule,
-  config,
-  tail,
-  onClose,
-  onRetry,
-}: {
-  rule: Rule;
-  config: Config | null;
-  tail: Tail | null;
-  onClose: () => void;
-  onRetry: () => Promise<void>;
-}) {
+function useModalDialog() {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
   useLayoutEffect(() => {
     const element = dialog.current!;
     const previousFocus = document.activeElement;
@@ -94,6 +86,43 @@ export function PolicyGuide({
         previousFocus.focus();
     };
   }, []);
+  return dialog;
+}
+
+function trapDialogFocus(event: KeyboardEvent<HTMLDialogElement>) {
+  if (event.key !== "Tab") return;
+  const controls = Array.from(
+    event.currentTarget.querySelectorAll<HTMLElement>(
+      'a[href], button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => element.getClientRects().length > 0);
+  const first = controls[0],
+    last = controls[controls.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last?.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first?.focus();
+  }
+}
+
+export function PolicyGuide({
+  rule,
+  config,
+  tail,
+  onClose,
+  onRetry,
+}: {
+  rule: Rule;
+  config: Config | null;
+  tail: Tail | null;
+  onClose: () => void;
+  onRetry: () => Promise<void>;
+}) {
+  const dialog = useModalDialog();
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
   const policy = config ? JSON.stringify(config.policy, null, 2) : "";
   return (
     <dialog
@@ -101,23 +130,7 @@ export function PolicyGuide({
       className="policy-guide"
       aria-labelledby="policy-guide-title"
       aria-describedby="policy-guide-description"
-      onKeyDown={(event) => {
-        if (event.key !== "Tab") return;
-        const controls = Array.from(
-          event.currentTarget.querySelectorAll<HTMLElement>(
-            'a[href], button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
-          ),
-        ).filter((element) => element.getClientRects().length > 0);
-        const first = controls[0],
-          last = controls[controls.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last?.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first?.focus();
-        }
-      }}
+      onKeyDown={trapDialogFocus}
       onCancel={(event) => {
         event.preventDefault();
         if (!busy) onClose();
@@ -272,6 +285,70 @@ export function PolicyGuide({
             重试发布
           </button>
         )}
+      </div>
+    </dialog>
+  );
+}
+
+export function PublishedAccessHelp({ onClose }: { onClose: () => void }) {
+  const dialog = useModalDialog();
+  return (
+    <dialog
+      ref={dialog}
+      className="policy-guide access-help"
+      aria-labelledby="access-help-title"
+      aria-describedby="access-help-description"
+      onKeyDown={trapDialogFocus}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <div className="policy-guide-heading">
+        <h2 id="access-help-title">无法访问已发布的规则？</h2>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="关闭访问帮助"
+          autoFocus
+          onClick={onClose}
+        >
+          <X size={19} />
+        </button>
+      </div>
+      <p id="access-help-description" className="muted">
+        已广告表示 ztail 已声明承载服务。访问 HTTPS 地址前，请确认以下两点。
+      </p>
+      <section className="guide-step">
+        <div className="guide-step-heading">
+          <h3>1. 确认服务主机已获审批</h3>
+          <a
+            href="https://console.tailscale.com/admin/services"
+            target="_blank"
+            rel="noreferrer"
+          >
+            打开 Services <ArrowUpRight size={14} />
+          </a>
+        </div>
+        <p>
+          如果已合并 ztail
+          提供的自动审批策略，且节点与服务的标签匹配，服务主机会自动获批。
+          否则，请在 Tailscale 控制台打开对应的 Service，在 Service hosts
+          中手动批准承载它的 ztail 节点。
+        </p>
+      </section>
+      <section className="guide-step">
+        <h3>2. 等待首次 HTTPS 证书签发</h3>
+        <p>
+          新发布的服务需要由 Tailscale 为其 HTTPS
+          域名签发证书，首次签发可能需要数分钟。
+          如果刚刚发布，请稍候再打开访问地址。
+        </p>
+      </section>
+      <div className="guide-actions">
+        <button type="button" onClick={onClose}>
+          关闭
+        </button>
       </div>
     </dialog>
   );

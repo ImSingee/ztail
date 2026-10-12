@@ -244,3 +244,154 @@ test("catalogue failures use the same guide and the modal is usable at 390px", a
     ),
   );
 });
+
+test("published rules explain host approval and initial HTTPS certificates without changing publication", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await login(page);
+  await page.getByRole("button", { name: "新增规则", exact: true }).click();
+  await page.getByLabel("Service 名称", { exact: true }).fill("grafana");
+  await page.getByRole("button", { name: "手填地址", exact: true }).click();
+  await page.getByLabel("后端主机名或 IP").fill("127.0.0.1");
+  await page.getByLabel("后端端口", { exact: true }).fill("18082");
+  await page.getByRole("button", { name: "保存并发布", exact: true }).click();
+  await expect(page.getByText("已广告", { exact: true })).toBeVisible();
+  const before = await audit(page);
+  const open = page.getByRole("button", {
+    name: "无法访问已发布的规则？",
+    exact: true,
+  });
+  const settings = page
+    .locator(".connection-strip")
+    .getByRole("button", { name: "连接设置", exact: true });
+  expect((await open.boundingBox())!.x).toBeLessThan(
+    (await settings.boundingBox())!.x,
+  );
+  await capture(page, "rules-help-entry-desktop");
+  await open.click();
+  const dialog = page.getByRole("dialog", {
+    name: "无法访问已发布的规则？",
+    exact: true,
+  });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("节点与服务的标签匹配");
+  await expect(dialog).toContainText("服务主机会自动获批");
+  await expect(dialog).toContainText(
+    "在 Service hosts 中手动批准承载它的 ztail 节点",
+  );
+  await expect(dialog).toContainText("首次签发可能需要数分钟");
+  await expect(dialog).toContainText("如果刚刚发布，请稍候再打开访问地址");
+  await expect(
+    dialog.getByRole("link", { name: "打开 Services", exact: true }),
+  ).toHaveAttribute("href", "https://console.tailscale.com/admin/services");
+  await capture(page, "rules-access-help-desktop");
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(open).toBeFocused();
+  const after = await audit(page);
+  expect(after.rules).toEqual(before.rules);
+  expect(after.ads).toEqual(before.ads);
+  expect(after.registryCalls).toEqual(before.registryCalls);
+  writeFileSync(
+    `${assets}/rules-access-help-audit.json`,
+    JSON.stringify(
+      {
+        before,
+        after,
+        helpChangesPublication: false,
+        consoleURL: "https://console.tailscale.com/admin/services",
+      },
+      null,
+      2,
+    ),
+  );
+});
+
+test("access help is usable on narrow screens and keyboard focus returns; shared footer only shows version", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  const open = page.getByRole("button", {
+    name: "无法访问已发布的规则？",
+    exact: true,
+  });
+  await capture(page, "rules-help-entry-mobile");
+  await open.click();
+  const dialog = page.getByRole("dialog", {
+    name: "无法访问已发布的规则？",
+    exact: true,
+  });
+  const close = dialog.getByRole("button", {
+    name: "关闭访问帮助",
+    exact: true,
+  });
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(
+    dialog.getByRole("button", { name: "关闭", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+  await expect(
+    dialog.getByRole("heading", {
+      name: "2. 等待首次 HTTPS 证书签发",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(await dialog.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(
+    true,
+  );
+  await capture(page, "rules-access-help-mobile");
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(open).toBeFocused();
+  expect(await page.evaluate(() => document.body.style.overflow)).toBe("");
+  await open.click();
+  await close.click();
+  await expect(open).toBeFocused();
+  const footers = [];
+  for (const name of ["发布规则", "Zeabur 服务", "连接设置"]) {
+    await page.getByRole("link", { name, exact: true }).click();
+    const footer = page.locator("footer");
+    await expect(footer.locator("span")).toHaveCount(1);
+    await expect(footer.locator(".mono")).toContainText("e2e-");
+    await expect(footer).not.toContainText("手动配置，明确发布");
+    footers.push({
+      page: name,
+      text: await footer.innerText(),
+      spans: await footer.locator("span").count(),
+    });
+  }
+  await page.getByRole("link", { name: "发布规则", exact: true }).click();
+  await page.getByRole("button", { name: "新增规则", exact: true }).click();
+  const editorFooter = page.locator("footer");
+  await expect(editorFooter.locator("span")).toHaveCount(1);
+  await expect(editorFooter.locator(".mono")).toContainText("e2e-");
+  footers.push({
+    page: "规则编辑",
+    text: await editorFooter.innerText(),
+    spans: await editorFooter.locator("span").count(),
+  });
+  writeFileSync(
+    `${assets}/rules-help-keyboard-audit.json`,
+    JSON.stringify(
+      {
+        viewport: { width: 390, height: 844 },
+        focusTrap: true,
+        escapeRestoresFocus: true,
+        closeRestoresFocus: true,
+        bodyScrollRestored: true,
+        noHorizontalOverflow: true,
+        footers,
+      },
+      null,
+      2,
+    ),
+  );
+});

@@ -17,7 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { ServiceCatalog } from "./catalog";
-import { PolicyError, PolicyGuide } from "./policy-guide";
+import { PolicyError, PolicyGuide, PublishedAccessHelp } from "./policy-guide";
 import "./style.css";
 
 export type Named = { _id: string; name: string };
@@ -252,7 +252,8 @@ function App() {
     [loadError, setLoadError] = useState(""),
     [busy, setBusy] = useState(false),
     [deleting, setDeleting] = useState<RuleView | null>(null),
-    [policyRule, setPolicyRule] = useState<Rule | null>(null);
+    [policyRule, setPolicyRule] = useState<Rule | null>(null),
+    [accessHelp, setAccessHelp] = useState(false);
   const tailVersion = useRef(0);
   const applyTailStatus = (status: Tail) => {
     tailVersion.current++;
@@ -260,6 +261,7 @@ function App() {
   };
   const navigate = (p: string, draft?: Rule) => {
     setPolicyRule(null);
+    setAccessHelp(false);
     history.pushState({ draft }, "", p);
     setSeed(draft);
     setPath(p);
@@ -296,11 +298,13 @@ function App() {
         setPath(location.pathname);
         setSeed(history.state?.draft);
         setPolicyRule(null);
+        setAccessHelp(false);
       },
       expired = () => {
         csrf = "";
         setSession(null);
         setPolicyRule(null);
+        setAccessHelp(false);
       };
     addEventListener("popstate", pop);
     addEventListener("session-expired", expired);
@@ -488,13 +492,21 @@ function App() {
                 {tail?.state === "Running" ? tail.tailnet : "Tailscale 未连接"}
               </span>
               <span className="mono">{config?.nodeTag || "…"}</span>
-              <button
-                className="text-button"
-                onClick={() => navigate("/settings")}
-              >
-                {tail?.state === "Running" ? "连接设置" : "完成节点接入"}
-                <ArrowUpRight size={14} />
-              </button>
+              <div className="connection-actions">
+                <button
+                  className="text-button"
+                  onClick={() => setAccessHelp(true)}
+                >
+                  无法访问已发布的规则？
+                </button>
+                <button
+                  className="text-button"
+                  onClick={() => navigate("/settings")}
+                >
+                  {tail?.state === "Running" ? "连接设置" : "完成节点接入"}
+                  <ArrowUpRight size={14} />
+                </button>
+              </div>
             </div>
             {!config ? (
               <div className="loading-inline">
@@ -660,8 +672,10 @@ function App() {
       </main>
       <footer>
         ztail <span className="mono">{session.version || "dev"}</span>
-        <span>手动配置，明确发布</span>
       </footer>
+      {accessHelp && (
+        <PublishedAccessHelp onClose={() => setAccessHelp(false)} />
+      )}
       {policyRule && (
         <PolicyGuide
           rule={policyRule}
