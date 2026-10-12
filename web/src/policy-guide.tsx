@@ -305,7 +305,7 @@ export function PublishedAccessHelp({ onClose }: { onClose: () => void }) {
       }}
     >
       <div className="policy-guide-heading">
-        <h2 id="access-help-title">无法访问已发布的规则？</h2>
+        <h2 id="access-help-title">无法访问已发布的服务？</h2>
         <button
           type="button"
           className="icon-button"
@@ -317,7 +317,7 @@ export function PublishedAccessHelp({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <p id="access-help-description" className="muted">
-        已广告表示 ztail 已声明承载服务。访问 HTTPS 地址前，请确认以下两点。
+        已发布表示 ztail 已声明承载服务。访问 HTTPS 地址前，请确认以下两点。
       </p>
       <section className="guide-step">
         <div className="guide-step-heading">

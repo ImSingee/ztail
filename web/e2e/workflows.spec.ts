@@ -7,11 +7,11 @@ async function capture(page: Page, name: string) {
   await page.screenshot({ path: `${assets}/${name}.png`, fullPage: true });
 }
 async function login(page: Page) {
-  await page.goto("/rules");
+  await page.goto("/services");
   await page.getByLabel("管理员密码", { exact: true }).fill("fixture-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "发布规则", exact: true }),
+    page.getByRole("heading", { name: "已发布", exact: true }),
   ).toBeVisible();
 }
 async function authorize(
@@ -30,7 +30,10 @@ async function audit(
   return (await request.get(base + "/fixture/audit")).json();
 }
 async function manual(page: Page, name = "grafana") {
-  await page.getByRole("button", { name: "新增规则" }).click();
+  await page
+    .locator(".page-heading")
+    .getByRole("button", { name: "发布", exact: true })
+    .click();
   await page.getByLabel("Service 名称", { exact: true }).fill(name);
   await page.getByRole("button", { name: "手填地址", exact: true }).click();
   await page.getByLabel("后端主机名或 IP").fill("127.0.0.1");
@@ -76,9 +79,9 @@ test("login rejects wrong password, protects management and supports logout", as
   expect((await request.get("/api/settings")).status()).toBe(401);
   await page.getByLabel("管理员密码", { exact: true }).fill("fixture-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.getByRole("link", { name: "发布规则", exact: true }).click();
+  await page.getByRole("link", { name: "已发布", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "发布规则", exact: true }),
+    page.getByRole("heading", { name: "已发布", exact: true }),
   ).toBeVisible();
   await capture(page, "empty-rules");
   expect(
@@ -107,7 +110,10 @@ test("Zeabur selection keeps second environment, drafts never advertise and refr
   request,
 }) => {
   await login(page);
-  await page.getByRole("button", { name: "新增规则" }).click();
+  await page
+    .locator(".page-heading")
+    .getByRole("button", { name: "发布", exact: true })
+    .click();
   await page.getByLabel("Service 名称", { exact: true }).fill("preview");
   await page.getByLabel("项目", { exact: true }).selectOption("project-a");
   await page.getByLabel("环境", { exact: true }).selectOption("env-second");
@@ -162,13 +168,15 @@ test("manual publish routes real upstream; edits reuse listener; rename, withdra
 }) => {
   await login(page);
   await authorize(page, request);
-  await page.getByRole("link", { name: "发布规则", exact: true }).click();
+  await page.getByRole("link", { name: "已发布", exact: true }).click();
   await manual(page);
   await page.getByRole("button", { name: "测试后端连接" }).click();
   await expect(page.getByText("后端可达", { exact: true })).toBeVisible();
   await capture(page, "manual-editor");
   await page.getByRole("button", { name: "保存并发布" }).click();
-  await expect(page.getByText("已广告", { exact: true })).toBeVisible();
+  await expect(
+    page.locator(".badge").filter({ hasText: /^已发布$/ }),
+  ).toBeVisible();
   let before = await audit(request);
   expect(before.ads).toEqual(["grafana"]);
   let response = await request.get(before.addresses.grafana + "/initial");
@@ -176,7 +184,9 @@ test("manual publish routes real upstream; edits reuse listener; rename, withdra
   await capture(page, "published-rules");
   await page.getByRole("button", { name: "编辑", exact: true }).click();
   await page.getByRole("button", { name: "保存并发布" }).click();
-  await expect(page.getByText("已广告", { exact: true })).toBeVisible();
+  await expect(
+    page.locator(".badge").filter({ hasText: /^已发布$/ }),
+  ).toBeVisible();
   let unchanged = await audit(request);
   expect(unchanged.addresses.grafana).toBe(before.addresses.grafana);
   await page.getByRole("button", { name: "编辑", exact: true }).click();
@@ -218,10 +228,10 @@ test("manual publish routes real upstream; edits reuse listener; rename, withdra
   await request.get("/fixture/failure?kind=withdrawal&enabled=false");
   await expect.poll(async () => (await audit(request)).ads).toEqual([]);
   await expect(page.getByText("草稿 / 已停用", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "删除 renamed" }).click();
-  await page.getByRole("button", { name: "删除规则", exact: true }).click();
+  await page.getByRole("button", { name: "删除服务 renamed" }).click();
+  await page.getByRole("button", { name: "删除服务", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "还没有发布规则" }),
+    page.getByRole("heading", { name: "还没有发布服务" }),
   ).toBeVisible();
   writeFileSync(
     `${assets}/lifecycle-audit.json`,
@@ -249,7 +259,7 @@ test("optional API creation and error retry have separate observable requests", 
   await page.getByLabel("管理员密码", { exact: true }).fill("fixture-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await authorize(page, request, base);
-  await page.getByRole("link", { name: "发布规则", exact: true }).click();
+  await page.getByRole("link", { name: "已发布", exact: true }).click();
   await manual(page, "brand-new");
   await page.getByLabel("名称尚未定义时，通过 API 创建 Service").check();
   await request.get(base + "/fixture/failure?kind=registry");
@@ -266,7 +276,9 @@ test("optional API creation and error retry have separate observable requests", 
   expect(failed.ads).toEqual([]);
   await request.get(base + "/fixture/failure?kind=registry&enabled=false");
   await page.getByRole("button", { name: "重试 brand-new" }).click();
-  await expect(page.getByText("已广告", { exact: true })).toBeVisible();
+  await expect(
+    page.locator(".badge").filter({ hasText: /^已发布$/ }),
+  ).toBeVisible();
   let successful = await audit(request, base);
   expect(
     successful.registryCalls.some(
@@ -290,13 +302,15 @@ test("responsive surfaces and keyboard navigation do not overflow", async ({
   await login(page);
   await authorize(page, request);
   await capture(page, "mobile-settings");
-  await page.getByRole("link", { name: "发布规则", exact: true }).click();
+  await page.getByRole("link", { name: "已发布", exact: true }).click();
   await manual(page);
   await capture(page, "mobile-editor");
   await page.getByRole("button", { name: "保存并发布" }).click();
-  await expect(page.getByText("已广告", { exact: true })).toBeVisible();
+  await expect(
+    page.locator(".badge").filter({ hasText: /^已发布$/ }),
+  ).toBeVisible();
   await capture(page, "mobile-rules");
-  for (const path of ["/", "/settings", "/rules/new"]) {
+  for (const path of ["/", "/settings", "/services/new"]) {
     await page.goto(path);
     await expect(page.locator("h1")).toBeVisible();
     expect(
@@ -305,10 +319,10 @@ test("responsive surfaces and keyboard navigation do not overflow", async ({
       ),
     ).toBe(true);
   }
-  await page.goto("/rules");
+  await page.goto("/services");
   await page.keyboard.press("Tab");
   await expect(page.locator(":focus")).toHaveCount(1);
-  await page.getByRole("button", { name: "删除 grafana" }).click();
+  await page.getByRole("button", { name: "删除服务 grafana" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByRole("button", { name: "取消", exact: true }).click();
   writeFileSync(
@@ -316,10 +330,125 @@ test("responsive surfaces and keyboard navigation do not overflow", async ({
     JSON.stringify(
       {
         viewport: { width: 390, height: 844 },
-        paths: ["/", "/settings", "/rules/new"],
+        paths: ["/", "/settings", "/services/new"],
         noHorizontalOverflow: true,
         keyboardFocus: true,
         deleteCancel: true,
+      },
+      null,
+      2,
+    ),
+  );
+});
+
+test("published services routes support refresh, history and old links; delete is presented as removing a service", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await login(page);
+  await expect(page).toHaveURL(/\/services$/);
+  await expect(
+    page.getByRole("link", { name: "已发布", exact: true }),
+  ).toHaveAttribute("href", "/services");
+  await request.get("/fixture/authorize");
+  await manual(page);
+  await expect(page).toHaveURL(/\/services\/new$/);
+  await expect(
+    page.getByRole("heading", { name: "发布服务", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "保存并发布", exact: true }).click();
+  await expect(page).toHaveURL(/\/services$/);
+  await expect(
+    page.locator(".badge").filter({ hasText: /^已发布$/ }),
+  ).toBeVisible();
+  const before = await audit(request);
+  const id = before.rules[0].id;
+  await page.reload();
+  await expect(
+    page.getByRole("link", { name: "grafana", exact: true }),
+  ).toHaveAttribute("href", "/services/" + id);
+  await capture(page, "services-list-desktop");
+  await page
+    .getByRole("button", { name: "无法访问已发布的服务？", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "无法访问已发布的服务？", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  const navigation = [];
+  for (const suffix of ["", "/new", "/" + id]) {
+    await page.goto("/rules" + suffix + "?from=bookmark#details");
+    await expect(page).toHaveURL(
+      new RegExp("/services" + suffix + "\\?from=bookmark#details$"),
+    );
+    await expect(
+      page.getByRole("heading", {
+        name:
+          suffix === ""
+            ? "已发布"
+            : suffix === "/new"
+              ? "发布服务"
+              : "编辑服务",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.reload();
+    await expect(page.locator("h1")).toBeVisible();
+    navigation.push(page.url());
+  }
+  await page.getByRole("button", { name: "返回已发布", exact: true }).click();
+  await expect(page).toHaveURL(/\/services$/);
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp("/services/" + id + "$"));
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "已发布", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "删除服务 grafana", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "删除服务 grafana？",
+    exact: true,
+  });
+  await expect(dialog).toContainText("将从 ztail 移除此服务");
+  await expect(dialog).toContainText("Tailscale 中的 Service 定义会保留");
+  await capture(page, "delete-service-desktop");
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  expect((await audit(request)).rules).toEqual(before.rules);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await capture(page, "services-list-mobile");
+  await page
+    .getByRole("button", { name: "删除服务 grafana", exact: true })
+    .click();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await capture(page, "delete-service-mobile");
+  const deleted = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/api/rules/" + id) && r.request().method() === "DELETE",
+  );
+  await dialog.getByRole("button", { name: "删除服务", exact: true }).click();
+  expect((await deleted).status()).toBe(202);
+  await expect(
+    page.getByRole("heading", { name: "还没有发布服务", exact: true }),
+  ).toBeVisible();
+  await expect.poll(async () => (await audit(request)).ads).toEqual([]);
+  writeFileSync(
+    `${assets}/services-routes-delete-audit.json`,
+    JSON.stringify(
+      {
+        before,
+        after: await audit(request),
+        navigation,
+        historyBack: true,
+        deleteHTTP: 202,
+        APIUnchanged: "/api/rules",
+        mobileNoOverflow: true,
       },
       null,
       2,

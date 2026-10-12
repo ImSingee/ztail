@@ -4,17 +4,20 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 const assets = process.env.ZTAIL_EVIDENCE_DIR || "test-results/evidence";
 mkdirSync(assets, { recursive: true });
 async function login(page: Page) {
-  await page.goto("/rules");
+  await page.goto("/services");
   await page.getByLabel("管理员密码", { exact: true }).fill("fixture-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "发布规则", exact: true }),
+    page.getByRole("heading", { name: "已发布", exact: true }),
   ).toBeVisible();
   await page.request.get("/fixture/authorize");
 }
 async function failingRule(page: Page) {
   await login(page);
-  await page.getByRole("button", { name: "新增规则", exact: true }).click();
+  await page
+    .locator(".page-heading")
+    .getByRole("button", { name: "发布", exact: true })
+    .click();
   await page.getByLabel("Service 名称", { exact: true }).fill("rsshub");
   await page.getByRole("button", { name: "手填地址", exact: true }).click();
   await page.getByLabel("后端主机名或 IP").fill("127.0.0.1");
@@ -250,16 +253,21 @@ test("published rules explain host approval and initial HTTPS certificates witho
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await login(page);
-  await page.getByRole("button", { name: "新增规则", exact: true }).click();
+  await page
+    .locator(".page-heading")
+    .getByRole("button", { name: "发布", exact: true })
+    .click();
   await page.getByLabel("Service 名称", { exact: true }).fill("grafana");
   await page.getByRole("button", { name: "手填地址", exact: true }).click();
   await page.getByLabel("后端主机名或 IP").fill("127.0.0.1");
   await page.getByLabel("后端端口", { exact: true }).fill("18082");
   await page.getByRole("button", { name: "保存并发布", exact: true }).click();
-  await expect(page.getByText("已广告", { exact: true })).toBeVisible();
+  await expect(
+    page.locator(".badge").filter({ hasText: /^已发布$/ }),
+  ).toBeVisible();
   const before = await audit(page);
   const open = page.getByRole("button", {
-    name: "无法访问已发布的规则？",
+    name: "无法访问已发布的服务？",
     exact: true,
   });
   const settings = page
@@ -271,7 +279,7 @@ test("published rules explain host approval and initial HTTPS certificates witho
   await capture(page, "rules-help-entry-desktop");
   await open.click();
   const dialog = page.getByRole("dialog", {
-    name: "无法访问已发布的规则？",
+    name: "无法访问已发布的服务？",
     exact: true,
   });
   await expect(dialog).toBeVisible();
@@ -313,13 +321,13 @@ test("access help is usable on narrow screens and keyboard focus returns; shared
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
   const open = page.getByRole("button", {
-    name: "无法访问已发布的规则？",
+    name: "无法访问已发布的服务？",
     exact: true,
   });
   await capture(page, "rules-help-entry-mobile");
   await open.click();
   const dialog = page.getByRole("dialog", {
-    name: "无法访问已发布的规则？",
+    name: "无法访问已发布的服务？",
     exact: true,
   });
   const close = dialog.getByRole("button", {
@@ -356,7 +364,7 @@ test("access help is usable on narrow screens and keyboard focus returns; shared
   await close.click();
   await expect(open).toBeFocused();
   const footers = [];
-  for (const name of ["发布规则", "Zeabur 服务", "连接设置"]) {
+  for (const name of ["已发布", "Zeabur 服务", "连接设置"]) {
     await page.getByRole("link", { name, exact: true }).click();
     const footer = page.locator("footer");
     await expect(footer.locator("span")).toHaveCount(1);
@@ -368,8 +376,11 @@ test("access help is usable on narrow screens and keyboard focus returns; shared
       spans: await footer.locator("span").count(),
     });
   }
-  await page.getByRole("link", { name: "发布规则", exact: true }).click();
-  await page.getByRole("button", { name: "新增规则", exact: true }).click();
+  await page.getByRole("link", { name: "已发布", exact: true }).click();
+  await page
+    .locator(".page-heading")
+    .getByRole("button", { name: "发布", exact: true })
+    .click();
   const editorFooter = page.locator("footer");
   await expect(editorFooter.locator("span")).toHaveCount(1);
   await expect(editorFooter.locator(".mono")).toContainText("e2e-");

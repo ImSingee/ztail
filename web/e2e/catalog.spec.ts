@@ -151,7 +151,7 @@ test("inline publishing uses the selected environment and port, manages existing
     page.getByRole("button", { name: "发布到 tailnet", exact: true }),
   ).toBeDisabled();
   await expect(
-    page.getByText("此名称已有发布规则，请使用另一个名称。", { exact: true }),
+    page.getByText("此名称已被使用，请使用另一个名称。", { exact: true }),
   ).toBeVisible();
   await page.getByLabel("访问名称", { exact: true }).fill("preview-secure");
   await page.getByRole("button", { name: "完整配置", exact: true }).click();

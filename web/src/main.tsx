@@ -154,7 +154,7 @@ const blank: Rule = {
 };
 const states: Record<string, string> = {
   draft: "草稿 / 已停用",
-  advertised: "已广告",
+  advertised: "已发布",
   error: "发布失败",
   update_failed: "更新失败 · 旧配置运行中",
   withdrawal_pending: "撤回待重试",
@@ -242,10 +242,23 @@ function Login({ onLogin }: { onLogin: (s: Session) => void }) {
     </main>
   );
 }
+function canonicalPagePath(path: string) {
+  return path.replace(/^\/rules(?=\/|$)/, "/services");
+}
+function readPagePath() {
+  const path = canonicalPagePath(location.pathname);
+  if (path !== location.pathname)
+    history.replaceState(
+      history.state,
+      "",
+      path + location.search + location.hash,
+    );
+  return path;
+}
 function App() {
   const [session, setSession] = useState<Session | null>(null),
     [initial, setInitial] = useState(true),
-    [path, setPath] = useState(location.pathname),
+    [path, setPath] = useState(() => canonicalPagePath(location.pathname)),
     [seed, setSeed] = useState<Rule | undefined>(history.state?.draft),
     [rules, setRules] = useState<RuleView[]>([]),
     [catalog, setCatalog] = useState<Catalog | null>(null),
@@ -290,6 +303,7 @@ function App() {
     }
   };
   useEffect(() => {
+    readPagePath();
     api<Session>("/session")
       .then((s) => {
         csrf = s.csrfToken;
@@ -298,7 +312,7 @@ function App() {
       .catch((e) => setError((e as Error).message))
       .finally(() => setInitial(false));
     const pop = () => {
-        setPath(location.pathname);
+        setPath(readPagePath());
         setSeed(history.state?.draft);
         setPolicyRule(null);
         setAccessHelp(false);
@@ -343,7 +357,7 @@ function App() {
       </main>
     );
   if (!session?.authenticated) return <Login onLogin={setSession} />;
-  const editing = path.startsWith("/rules/"),
+  const editing = path.startsWith("/services/"),
     settings = path === "/settings",
     browsing = path === "/",
     editID = path.split("/")[2],
@@ -378,14 +392,14 @@ function App() {
           </a>
           <a
             className={!settings && !browsing ? "active" : ""}
-            href="/rules"
+            href="/services"
             onClick={(e) => {
               e.preventDefault();
-              navigate("/rules");
+              navigate("/services");
             }}
           >
             <Globe size={16} />
-            发布规则
+            已发布
           </a>
           <a
             className={settings ? "active" : ""}
@@ -440,8 +454,8 @@ function App() {
               await load();
               return saved;
             }}
-            onConfigure={(draft) => navigate("/rules/new", draft)}
-            onManage={(id) => navigate("/rules/" + id)}
+            onConfigure={(draft) => navigate("/services/new", draft)}
+            onManage={(id) => navigate("/services/" + id)}
             onSettings={() => navigate("/settings")}
             onPolicy={setPolicyRule}
           />
@@ -449,8 +463,10 @@ function App() {
           <>
             {editID !== "new" && !current ? (
               <div className="notice">
-                {config ? "规则不存在。" : "正在读取规则…"}
-                <button onClick={() => navigate("/rules")}>返回规则</button>
+                {config ? "服务不存在。" : "正在读取服务…"}
+                <button onClick={() => navigate("/services")}>
+                  返回已发布
+                </button>
               </div>
             ) : (
               <Editor
@@ -459,11 +475,11 @@ function App() {
                 config={config}
                 catalog={catalog}
                 tail={tail}
-                backLabel={seed ? "返回服务列表" : "返回发布规则"}
-                onBack={() => navigate(seed ? "/" : "/rules")}
+                backLabel={seed ? "返回服务列表" : "返回已发布"}
+                onBack={() => navigate(seed ? "/" : "/services")}
                 onSaved={async () => {
                   await load();
-                  navigate("/rules");
+                  navigate("/services");
                 }}
               />
             )}
@@ -472,17 +488,17 @@ function App() {
           <>
             <div className="page-heading">
               <div>
-                <h1>发布规则</h1>
+                <h1>已发布</h1>
                 <p className="muted">
                   选择后端服务，以独立的 HTTPS 名称发布到 tailnet。
                 </p>
               </div>
               <button
                 className="primary"
-                onClick={() => navigate("/rules/new")}
+                onClick={() => navigate("/services/new")}
               >
                 <Plus size={17} />
-                新增规则
+                发布
               </button>
             </div>
             <div className="connection-strip">
@@ -500,7 +516,7 @@ function App() {
                   className="text-button"
                   onClick={() => setAccessHelp(true)}
                 >
-                  无法访问已发布的规则？
+                  无法访问已发布的服务？
                 </button>
                 <button
                   className="text-button"
@@ -514,16 +530,16 @@ function App() {
             {!config ? (
               <div className="loading-inline">
                 <Busy />
-                正在读取规则…
+                正在读取服务…
               </div>
             ) : rules.length === 0 ? (
               <div className="empty">
                 <Globe size={34} />
-                <h2>还没有发布规则</h2>
+                <h2>还没有发布服务</h2>
                 <p>
                   从 Zeabur 服务列表选择后端，或手填集群地址。
                   <br />
-                  只有你明确启用的规则才会发布。
+                  确认发布后，服务才会加入 tailnet。
                 </p>
                 <button onClick={() => navigate("/")}>
                   <Cloud size={16} />
@@ -543,10 +559,10 @@ function App() {
                     <div>
                       <a
                         className="rule-name"
-                        href={"/rules/" + r.id}
+                        href={"/services/" + r.id}
                         onClick={(e) => {
                           e.preventDefault();
-                          navigate("/rules/" + r.id);
+                          navigate("/services/" + r.id);
                         }}
                       >
                         {r.name}
@@ -636,7 +652,7 @@ function App() {
                       </button>
                       <button
                         disabled={busy}
-                        onClick={() => navigate("/rules/" + r.id)}
+                        onClick={() => navigate("/services/" + r.id)}
                       >
                         编辑
                       </button>
@@ -656,7 +672,7 @@ function App() {
                       <button
                         disabled={busy}
                         className="icon-button"
-                        aria-label={"删除 " + r.name}
+                        aria-label={"删除服务 " + r.name}
                         onClick={() => setDeleting(r)}
                       >
                         <Trash2 size={16} />
@@ -667,7 +683,7 @@ function App() {
               </div>
             )}
             <p className="footnote">
-              已广告表示本节点已配置并声明承载该 Service。访问仍受 tailnet
+              已发布表示本节点已配置并声明承载该 Service。访问仍受 tailnet
               审批与授权策略控制。
             </p>
           </>
@@ -721,9 +737,10 @@ function App() {
               }
             }}
           >
-            <h2 id="delete-title">删除 {deleting.name}？</h2>
+            <h2 id="delete-title">删除服务 {deleting.name}？</h2>
             <p>
-              将删除此规则并撤回本节点广告。Tailscale 中的 Service 定义会保留。
+              将从 ztail 移除此服务，并撤回本节点的发布。Tailscale 中的 Service
+              定义会保留。
             </p>
             <div className="actions">
               <button autoFocus onClick={() => setDeleting(null)}>
@@ -739,7 +756,7 @@ function App() {
                   })
                 }
               >
-                删除规则
+                删除服务
               </button>
             </div>
           </section>
@@ -755,7 +772,7 @@ function Editor({
   tail,
   onBack,
   onSaved,
-  backLabel = "返回发布规则",
+  backLabel = "返回已发布",
 }: {
   initial: Rule;
   config: Config | null;
@@ -805,7 +822,7 @@ function Editor({
       </button>
       <div className="page-heading">
         <div>
-          <h1>{form.id ? "编辑发布规则" : "新增发布规则"}</h1>
+          <h1>{form.id ? "编辑服务" : "发布服务"}</h1>
           <p className="muted">一个名称对应一个后端。保存草稿不会发布服务。</p>
         </div>
       </div>
@@ -1318,9 +1335,6 @@ function Connection({
       </dl>
       <ErrorBox message={catalog?.error || ""} />
       <ErrorBox message={config?.withdrawalErrors?.join("；") || ""} />
-      <p className="help">
-        通过 ZEABUR_SERVER_ID 固定服务器，API Key 由环境变量提供。
-      </p>
     </section>
   );
 
@@ -1406,12 +1420,6 @@ function Connection({
                   "暂不可用，正在重试"
                 ) : (
                   "正在准备 HTTPS 入口…"
-                )}
-                {tail?.panelUrl && (
-                  <p className="help">
-                    通过 tailnet 访问，仍需管理员密码。若无法连接，请检查节点的
-                    TCP 443 访问权限。
-                  </p>
                 )}
               </dd>
               <dt>配置的 tag</dt>

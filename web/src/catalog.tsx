@@ -605,7 +605,7 @@ function ServiceRow({
           </div>
           {nameConflict && (
             <p className="row-error" role="alert">
-              此名称已有发布规则，请使用另一个名称。
+              此名称已被使用，请使用另一个名称。
             </p>
           )}
           {!selectionValid && (
@@ -633,7 +633,7 @@ function ServiceRow({
           )}
           {tail?.state !== "Running" && (
             <p className="help">
-              节点尚未连接。可以保存发布规则，接入后会应用。
+              节点尚未连接。可以先保存服务配置，接入后会发布。
               <button
                 type="button"
                 className="text-button"
