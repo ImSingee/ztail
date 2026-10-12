@@ -155,6 +155,17 @@ func TestBrowserServer(t *testing.T) {
 			case "/fixture/auth-state":
 				tail.mu.Lock()
 				switch r.URL.Query().Get("state") {
+				case "panel-renamed":
+					tail.state.DNSName = "ztail-renamed-with-a-long-node-name.fixture.ts.net"
+				case "panel-no-https":
+					tail.state.HTTPS = false
+				case "panel-no-dns":
+					tail.state.MagicDNS = false
+				case "panel-error":
+					tail.panelFailure = true
+					if tail.panelListener != nil {
+						_ = tail.panelListener.Close()
+					}
 				case "error":
 					tail.state.Connecting = false
 					tail.state.Error = "invalid authkey"
@@ -189,12 +200,16 @@ func TestBrowserServer(t *testing.T) {
 				}
 				connects := append([]map[string]any{}, tail.connects...)
 				count := tail.listenCount
+				panelAddress := ""
+				if tail.panelListener != nil {
+					panelAddress = "http://" + tail.panelListener.Addr().String()
+				}
 				tail.mu.Unlock()
 				registry.mu.Lock()
 				calls := append([]map[string]any{}, registry.calls...)
 				registry.mu.Unlock()
 				rules, _ := app.Store.List()
-				jsonResponse(w, 200, map[string]any{"ads": ads, "addresses": addresses, "connects": connects, "listenCount": count, "registryCalls": calls, "rules": rules})
+				jsonResponse(w, 200, map[string]any{"ads": ads, "addresses": addresses, "connects": connects, "listenCount": count, "panelAddress": panelAddress, "registryCalls": calls, "rules": rules})
 			case "/fixture/failure":
 				which := r.URL.Query().Get("kind")
 				enabled := r.URL.Query().Get("enabled") != "false"

@@ -2,6 +2,7 @@ package ztail
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -24,6 +25,9 @@ type TailStatus struct {
 	Tailnet       string   `json:"tailnet"`
 	DNSSuffix     string   `json:"dnsSuffix"`
 	Hostname      string   `json:"hostname"`
+	DNSName       string   `json:"dnsName"`
+	PanelURL      string   `json:"panelUrl"`
+	PanelError    string   `json:"panelError"`
 	NodeID        string   `json:"nodeId"`
 	Tags          []string `json:"tags"`
 	IPs           []string `json:"ips"`
@@ -44,6 +48,7 @@ type Tailnet interface {
 	Connect(context.Context, string, string) error
 	Services(context.Context) (map[string]ServiceDefinition, error)
 	Listen(context.Context, string) (net.Listener, error)
+	ListenPanel(context.Context) (net.Listener, error)
 	Withdraw(context.Context, string) error
 	Advertisements(context.Context) ([]string, error)
 	Close() error
@@ -165,6 +170,7 @@ func (t *EmbeddedTailnet) Status(ctx context.Context) TailStatus {
 	out := TailStatus{State: st.BackendState, AuthURL: st.AuthURL, Tags: []string{}, IPs: []string{}}
 	if st.Self != nil {
 		out.Hostname = st.Self.HostName
+		out.DNSName = strings.TrimSuffix(st.Self.DNSName, ".")
 		out.NodeID = string(st.Self.ID)
 		if st.Self.Tags != nil {
 			for _, tag := range st.Self.Tags.All() {
@@ -297,6 +303,33 @@ func (t *EmbeddedTailnet) Listen(ctx context.Context, name string) (net.Listener
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.server.ListenService("svc:"+name, tsnet.ServiceModeHTTP{HTTPS: true, Port: 443})
+}
+
+// ListenPanel binds the node's own HTTPS port, independently of Service VIPs.
+func (t *EmbeddedTailnet) ListenPanel(ctx context.Context) (net.Listener, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.server == nil {
+		return nil, errors.New("请先完成 Tailscale 授权")
+	}
+	// ListenTLS uses a background context while waiting for Up. Use the same
+	// TLS construction with cancellable Up so shutdown cannot stall on login.
+	st, err := t.server.Up(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if st.CurrentTailnet == nil || !st.CurrentTailnet.MagicDNSEnabled || len(st.CertDomains) == 0 {
+		return nil, errors.New("请在 Tailscale 控制台开启 MagicDNS 和 HTTPS")
+	}
+	lc, err := t.server.LocalClient()
+	if err != nil {
+		return nil, err
+	}
+	ln, err := t.server.Listen("tcp", ":443")
+	if err != nil {
+		return nil, err
+	}
+	return tls.NewListener(ln, &tls.Config{GetCertificate: lc.GetCertificate}), nil
 }
 func (t *EmbeddedTailnet) Close() error {
 	t.mu.Lock()
