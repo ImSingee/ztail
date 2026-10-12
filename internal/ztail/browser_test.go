@@ -76,10 +76,13 @@ func TestManagementSecurity(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code)
 	}
-	if w = call("GET", "/api/settings", "", cookies, ""); w.Code != 401 {
-		t.Fatal("logout not revoked")
+	if cleared := w.Result().Cookies(); len(cleared) != 1 || cleared[0].Name != "ztail_session" || cleared[0].MaxAge != -1 || cleared[0].Value != "" {
+		t.Fatal("logout did not clear session cookie")
 	}
-	t.Log("real HTTP handlers: protected GET401, wrong password401, login200 + HttpOnly/Strict cookie, missing CSRF403, cross-Origin403, config redacted/custom tag, logout revokes session")
+	if w = call("GET", "/api/settings", "", "", ""); w.Code != 401 {
+		t.Fatal("request without cookie authenticated after logout")
+	}
+	t.Log("real HTTP handlers: protected GET401, wrong password401, login200 + HttpOnly/Strict cookie, missing CSRF403, cross-Origin403, config redacted/custom tag, logout clears browser cookie")
 }
 
 // This harness is compiled only into test binaries. Production has no mock

@@ -17,10 +17,6 @@ import (
 	"time"
 )
 
-type session struct {
-	CSRF    string
-	Expires time.Time
-}
 type attempt struct {
 	Count int
 	Start time.Time
@@ -34,13 +30,12 @@ type App struct {
 	Assets   fs.FS
 	Version  string
 	mu       sync.Mutex
-	sessions map[string]session
 	attempts map[string]attempt
 	cancel   context.CancelFunc
 }
 
 func NewApp(c Config, s *Store, z CatalogProvider, t Tailnet, registry Registry, assets fs.FS) *App {
-	return &App{Config: c, Store: s, Catalog: z, Tail: t, Manager: NewManager(c, s, z, t, registry), Assets: assets, Version: "dev", sessions: map[string]session{}, attempts: map[string]attempt{}}
+	return &App{Config: c, Store: s, Catalog: z, Tail: t, Manager: NewManager(c, s, z, t, registry), Assets: assets, Version: "dev", attempts: map[string]attempt{}}
 }
 func (a *App) Start(ctx context.Context) {
 	ctx, a.cancel = context.WithCancel(ctx)
@@ -156,17 +151,14 @@ func (a *App) getSession(r *http.Request) (session, bool) {
 	if err != nil {
 		return session{}, false
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	s, ok := a.sessions[cookie.Value]
-	if !ok || time.Now().After(s.Expires) {
-		delete(a.sessions, cookie.Value)
-		return session{}, false
-	}
-	return s, true
+	return a.verifySession(cookie.Value)
 }
 func (a *App) sessionInfo(w http.ResponseWriter, r *http.Request) {
 	s, ok := a.getSession(r)
+	if ok {
+		cookie, _ := r.Cookie("ztail_session")
+		setSessionCookie(w, r, cookie.Value)
+	}
 	jsonResponse(w, 200, map[string]any{"authenticated": ok, "csrfToken": s.CSRF, "version": a.Version})
 }
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
@@ -187,11 +179,6 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 			delete(a.attempts, k)
 		}
 	}
-	for k, v := range a.sessions {
-		if now.After(v.Expires) {
-			delete(a.sessions, k)
-		}
-	}
 	at := a.attempts[ip]
 	if at.Start.IsZero() {
 		at.Start = now
@@ -210,25 +197,15 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, 401, errors.New("管理员密码错误"))
 		return
 	}
-	id, csrf := token(), token()
+	value, csrf := a.newSession()
 	a.mu.Lock()
 	delete(a.attempts, ip)
-	if len(a.sessions) >= 1000 {
-		a.mu.Unlock()
-		a.fail(w, 429, errors.New("会话数量过多，请稍后重试"))
-		return
-	}
-	a.sessions[id] = session{CSRF: csrf, Expires: now.Add(12 * time.Hour)}
 	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "ztail_session", Value: id, Path: "/", HttpOnly: true, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", SameSite: http.SameSiteStrictMode, MaxAge: 43200})
+	setSessionCookie(w, r, value)
 	jsonResponse(w, 200, map[string]any{"authenticated": true, "csrfToken": csrf, "version": a.Version})
 }
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
-	cookie, _ := r.Cookie("ztail_session")
-	a.mu.Lock()
-	delete(a.sessions, cookie.Value)
-	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "ztail_session", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: "ztail_session", Path: "/", MaxAge: -1, HttpOnly: true, Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https", SameSite: http.SameSiteStrictMode})
 	jsonResponse(w, 200, map[string]bool{"authenticated": false})
 }
 func (a *App) settings(w http.ResponseWriter, r *http.Request) {
