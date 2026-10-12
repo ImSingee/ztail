@@ -6,3 +6,8 @@ import "embed"
 //
 //go:embed dist
 var Assets embed.FS
+
+// Messages supplies English fallbacks for structured API messages.
+//
+//go:embed src/locales/en.json
+var Messages []byte

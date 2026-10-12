@@ -1,3 +1,4 @@
+import { useI18n, asMessage, type Message } from "./i18n";
 import { useState } from "react";
 import {
   ArrowUpRight,
@@ -44,14 +45,14 @@ const protocol = (p: ServicePort): Rule["protocol"] =>
       ? "https"
       : "http";
 const deploymentStates: Record<string, string> = {
-  RUNNING: "运行中",
-  STOPPED: "已停止",
-  SUSPENDED: "已暂停",
-  NOT_DEPLOYED: "未部署",
-  BUILDING: "构建中",
-  DEPLOYING: "部署中",
-  FAILED: "部署失败",
-  CRASHED: "已崩溃",
+  RUNNING: "Running",
+  STOPPED: "Stopped",
+  SUSPENDED: "Suspended",
+  NOT_DEPLOYED: "Not deployed",
+  BUILDING: "Building",
+  DEPLOYING: "Deploying",
+  FAILED: "Deployment failed",
+  CRASHED: "Crashed",
 };
 
 function suggestedName(service: ZeaburService, rules: RuleView[]) {
@@ -96,20 +97,21 @@ function draftFor(
   };
 }
 function ID({ value }: { value: string }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   return (
     <span className="resource-id mono">
       <span>{value}</span>
       <button
         className="icon-button"
-        aria-label={"复制 ID " + value}
+        aria-label={t("Copy ID ") + value}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(value);
             setCopied(true);
             setTimeout(() => setCopied(false), 1600);
           } catch {
-            window.prompt("复制此 ID", value);
+            window.prompt(t("Copy this ID"), value);
           }
         }}
       >
@@ -133,12 +135,12 @@ type Props = {
 };
 
 export function ServiceCatalog(props: Props) {
-  const { catalog, config, tail, rules, onRefresh, onConfigure, onSettings } =
-    props;
+  const { t, message, locale } = useI18n();
+  const { catalog, config, tail, onRefresh, onConfigure, onSettings } = props;
   const [search, setSearch] = useState(""),
     [collapsed, setCollapsed] = useState<Set<string>>(new Set()),
     [refreshing, setRefreshing] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState<Message>("");
   const projects = catalog?.projects || [];
   const term = search.trim().toLowerCase();
   const groups = projects
@@ -186,8 +188,12 @@ export function ServiceCatalog(props: Props) {
     <>
       <div className="page-heading">
         <div>
-          <h1>Zeabur 服务</h1>
-          <p className="muted">浏览集群服务，选择端口发布到 tailnet。</p>
+          <h1>{t("Zeabur services")}</h1>
+          <p className="muted">
+            {t(
+              "Browse cluster services and choose a port to publish to your tailnet.",
+            )}
+          </p>
         </div>
         <button
           onClick={() =>
@@ -209,21 +215,26 @@ export function ServiceCatalog(props: Props) {
             })
           }
         >
-          手动添加后端
+          {t("Add a backend manually")}
         </button>
       </div>
-      <div className="catalog-summary" aria-label="服务目录统计">
+      <div
+        className="catalog-summary"
+        aria-label={t("Service catalog statistics")}
+      >
         <span>
           <Folder size={18} />
-          <strong>{projects.length}</strong> 项目
+          <strong>{projects.length}</strong>{" "}
+          {t(projects.length === 1 ? "Project" : "Projects")}
         </span>
         <span>
           <Cloud size={18} />
-          <strong>{services}</strong> 服务
+          <strong>{services}</strong>{" "}
+          {t(services === 1 ? "Service" : "Services")}
         </span>
         <span>
           <Globe size={18} />
-          <strong>{ports}</strong> 可发布端口
+          <strong>{ports}</strong> {t("Publishable ports")}
         </span>
       </div>
       <div className="catalog-server">
@@ -236,29 +247,31 @@ export function ServiceCatalog(props: Props) {
           <span
             className={"dot " + (tail?.state === "Running" ? "green" : "amber")}
           />
-          {tail?.state === "Running" ? tail.tailnet : "连接 Tailscale"}
+          {tail?.state === "Running" ? tail.tailnet : t("Connect Tailscale")}
           <ArrowUpRight size={14} />
         </button>
       </div>
       <div className="catalog-toolbar">
         <div>
-          <h2>项目与服务</h2>
-          <span className="muted">按项目与环境分组</span>
+          <h2>{t("Projects and services")}</h2>
+          <span className="muted">
+            {t("Grouped by project and environment")}
+          </span>
         </div>
         <div className="catalog-tools">
           <label className="catalog-search">
             <Search size={17} />
             <input
-              aria-label="搜索 Zeabur 服务"
+              aria-label={t("Search Zeabur services")}
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索名称、DNS、ID 或端口"
+              placeholder={t("Search by name, DNS, ID or port")}
             />
           </label>
           <button
-            aria-label="刷新服务列表"
-            title="刷新服务列表"
+            aria-label={t("Refresh service catalog")}
+            title={t("Refresh service catalog")}
             disabled={refreshing}
             onClick={async () => {
               setRefreshing(true);
@@ -266,32 +279,35 @@ export function ServiceCatalog(props: Props) {
               try {
                 await onRefresh();
               } catch (e) {
-                setError((e as Error).message);
+                setError(asMessage(e));
               } finally {
                 setRefreshing(false);
               }
             }}
           >
             <RefreshCw size={16} className={refreshing ? "spin" : ""} />
-            <span>刷新</span>
+            <span>{t("Refresh")}</span>
           </button>
         </div>
       </div>
       {catalog?.updatedAt && (
         <p className="catalog-updated">
-          更新于{" "}
-          {new Date(catalog.updatedAt).toLocaleString("zh-CN", {
+          {t("Updated ")}{" "}
+          {new Date(catalog.updatedAt).toLocaleString(locale, {
             hour12: false,
           })}
         </p>
       )}
       {(error || catalog?.error) && (
         <div className="notice error" role="alert">
-          {error || catalog?.error}
+          {message(error || catalog?.errorInfo || catalog?.error || "")}
         </div>
       )}
       {!catalog || (!catalog.updatedAt && !catalog.error) ? (
-        <div className="catalog-skeleton" aria-label="正在读取服务目录">
+        <div
+          className="catalog-skeleton"
+          aria-label={t("Loading service catalog")}
+        >
           {[1, 2, 3].map((n) => (
             <div key={n} />
           ))}
@@ -299,15 +315,19 @@ export function ServiceCatalog(props: Props) {
       ) : projects.length === 0 ? (
         <div className="empty">
           <Cloud size={34} />
-          <h2>此服务器还没有可用的服务目录</h2>
-          <p>检查服务器配置和 API Key，或刷新服务列表。</p>
+          <h2>{t("No service catalog available for this server yet")}</h2>
+          <p>
+            {t(
+              "Check the server configuration and API Key, or refresh the service catalog.",
+            )}
+          </p>
         </div>
       ) : groups.length === 0 ? (
         <div className="empty">
           <Search size={30} />
-          <h2>没有匹配的服务</h2>
-          <p>试试服务名称、DNS 或端口号。</p>
-          <button onClick={() => setSearch("")}>清除搜索</button>
+          <h2>{t("No matching services")}</h2>
+          <p>{t("Try a service name, DNS name or port number.")}</p>
+          <button onClick={() => setSearch("")}>{t("Clear search")}</button>
         </div>
       ) : (
         <div className="catalog-groups">
@@ -331,7 +351,14 @@ export function ServiceCatalog(props: Props) {
                     >
                       <ChevronDown size={17} className={open ? "" : "closed"} />
                       {project.name}
-                      <span>{project.services.length} 个服务</span>
+                      <span>
+                        {t(
+                          project.services.length === 1
+                            ? "{0} service"
+                            : "{0} services",
+                          project.services.length,
+                        )}
+                      </span>
                     </button>
                   </h2>
                   <ID value={project._id} />
@@ -346,15 +373,16 @@ export function ServiceCatalog(props: Props) {
                       >
                         <div className="catalog-environment-heading">
                           <span>
-                            环境 <strong>{environment.name}</strong>
+                            {t("Environment")}
+                            <strong>{environment.name}</strong>
                           </span>
                           <ID value={environment._id} />
                         </div>
                         <div className="catalog-columns" aria-hidden="true">
-                          <span>服务 / DNS</span>
-                          <span>端口</span>
-                          <span>部署状态</span>
-                          <span>操作</span>
+                          <span>{t("Service / DNS")}</span>
+                          <span>{t("Port")}</span>
+                          <span>{t("Deployment status")}</span>
+                          <span>{t("Actions")}</span>
                         </div>
                         {services.map((service) => (
                           <ServiceRow
@@ -376,8 +404,9 @@ export function ServiceCatalog(props: Props) {
         </div>
       )}
       <p className="footnote">
-        端口来自所选环境。HTTP/HTTPS 和 TCP 支持快捷发布；UDP
-        展示供参考。发布前可修改访问名称，审批和访问权限遵循 tailnet 策略。
+        {t(
+          "Ports come from the selected environment. HTTP/HTTPS and TCP support quick publishing; UDP is shown for reference. You can change the access name before publishing. Approval and access follow your tailnet policy.",
+        )}
       </p>
     </>
   );
@@ -402,9 +431,10 @@ function ServiceRow({
   service: ZeaburService;
   details?: ServiceEnvironment;
 }) {
+  const { t, message } = useI18n();
   const [draft, setDraft] = useState<Rule | null>(null),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState<Message>("");
   const ports = details?.ports || [];
   const publishable =
     details && !details.error ? ports.filter(supportedPort) : [];
@@ -435,7 +465,9 @@ function ServiceRow({
       <div className="catalog-service-row">
         <div className="catalog-service-name">
           <strong>{service.name}</strong>
-          <span className="mono muted">{service.dnsName || "未设置 DNS"}</span>
+          <span className="mono muted">
+            {service.dnsName || t("DNS not set")}
+          </span>
           <ID value={service._id} />
         </div>
         <div className="catalog-ports">
@@ -450,14 +482,14 @@ function ServiceRow({
             ))
           ) : (
             <span className="muted">
-              {details?.error ? "端口读取失败" : "未发现端口"}
+              {details?.error ? t("Failed to load ports") : t("No ports found")}
             </span>
           )}
           {details?.error && (
             <span className="row-error">
-              {details.error}
+              {message(details.errorInfo || details.error)}
               <br />
-              显示上次数据，刷新后重试。
+              {t("Showing previous data. Refresh to retry.")}
             </span>
           )}
         </div>
@@ -468,9 +500,13 @@ function ServiceRow({
               (status === "RUNNING" && !details?.error ? "success" : "neutral")
             }
           >
-            {status ? deploymentStates[status] || status : "状态未知"}
+            {status
+              ? t(deploymentStates[status] || status)
+              : t("Unknown status")}
           </span>
-          {details?.error && <div className="status-note">数据待刷新</div>}
+          {details?.error && (
+            <div className="status-note">{t("Data needs refresh")}</div>
+          )}
         </div>
         <div className="catalog-service-actions">
           {serviceRules.map((rule) => (
@@ -486,17 +522,16 @@ function ServiceRow({
                 }
               >
                 {rule.status.state === "advertised"
-                  ? "已发布"
+                  ? t("Published")
                   : rule.enabled
-                    ? "待发布 / 异常"
-                    : "已配置"}
+                    ? t("Pending / Error")
+                    : t("Configured")}
               </span>
               <button onClick={() => onManage(rule.id)}>
-                管理
                 {ports.filter(supportedPort).length > 1 ||
                 serviceRules.length > 1
-                  ? " " + rule.port
-                  : "发布"}
+                  ? t("Manage {0}", rule.port)
+                  : t("Manage publishing")}
               </button>
               {(rule.status.state === "advertised" || rule.status.activeUrl) &&
                 (isWebAddress(rule.status.activeUrl || rule.status.url) ? (
@@ -519,7 +554,7 @@ function ServiceRow({
               {rule.status.error && (
                 <span className="row-error">
                   <PolicyError
-                    message={rule.status.error}
+                    message={rule.status.errorInfo || rule.status.error}
                     onOpen={() => onPolicy(rule)}
                   />
                 </span>
@@ -532,14 +567,12 @@ function ServiceRow({
               <button
                 className="primary"
                 key={p.id + p.port}
-                aria-label={
-                  "发布 " +
-                  service.name +
-                  " " +
-                  p.port +
-                  " · " +
-                  environment.name
-                }
+                aria-label={t(
+                  "Publish {0} {1} · {2}",
+                  service.name,
+                  p.port,
+                  environment.name,
+                )}
                 onClick={() => {
                   setError("");
                   setDraft(
@@ -547,7 +580,8 @@ function ServiceRow({
                   );
                 }}
               >
-                发布{publishable.length > 1 ? " " + p.port : ""}
+                {t("Publish")}
+                {publishable.length > 1 ? " " + p.port : ""}
               </button>
             ))}
           {!publishable.length && !serviceRules.length && (
@@ -565,7 +599,7 @@ function ServiceRow({
                 )
               }
             >
-              手动配置
+              {t("Configure manually")}
             </button>
           )}
         </div>
@@ -573,7 +607,7 @@ function ServiceRow({
       {draft && (
         <form
           className="quick-publish"
-          aria-label={"发布 " + service.name + " · " + environment.name}
+          aria-label={t("Publish ") + service.name + " · " + environment.name}
           onSubmit={async (e) => {
             e.preventDefault();
             if (busy || nameConflict || !selectionValid) return;
@@ -583,21 +617,21 @@ function ServiceRow({
               await onPublish({ ...draft, enabled: true });
               setDraft(null);
             } catch (e) {
-              setError((e as Error).message);
+              setError(asMessage(e));
             } finally {
               setBusy(false);
             }
           }}
         >
           <div className="quick-publish-heading">
-            <strong>发布 {service.name}</strong>
+            <strong>{t("Publish {0}", service.name)}</strong>
             <span>
               {environment.name} · {draft.protocol.toUpperCase()} :{draft.port}
             </span>
             <button
               type="button"
               className="icon-button"
-              aria-label="取消快捷发布"
+              aria-label={t("Cancel quick publishing")}
               disabled={busy}
               onClick={() => setDraft(null)}
             >
@@ -605,7 +639,7 @@ function ServiceRow({
             </button>
           </div>
           <label htmlFor={"publish-" + service._id + environment._id}>
-            访问名称
+            {t("Access name")}
           </label>
           <div className="quick-publish-fields">
             <input
@@ -619,13 +653,13 @@ function ServiceRow({
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             />
             <span className="mono domain-preview">
-              {accessPreview(draft, tail?.dnsSuffix)}
+              {accessPreview(draft, tail?.dnsSuffix, t("<name>"))}
             </span>
           </div>
           {draft.protocol === "tcp" && (
             <div className="field">
               <label htmlFor={"publish-port-" + service._id + environment._id}>
-                发布端口
+                {t("Published port")}
               </label>
               <input
                 id={"publish-port-" + service._id + environment._id}
@@ -640,19 +674,21 @@ function ServiceRow({
                 }
               />
               <p className="help">
-                使用对应客户端连接此端口，转发到后端 {draft.port}
-                。完整配置中可测试后端连接。
+                {t(
+                  "Connect with the appropriate client; traffic forwards to backend port {0}. Test connectivity in the full configuration.",
+                  draft.port,
+                )}
               </p>
             </div>
           )}
           {nameConflict && (
             <p className="row-error" role="alert">
-              此名称已被使用，请使用另一个名称。
+              {t("This name is already in use. Choose another name.")}
             </p>
           )}
           {!selectionValid && (
             <p className="row-error" role="alert">
-              端口数据已失效，请刷新并重新选择端口。
+              {t("Port data has expired. Refresh and select the port again.")}
             </p>
           )}
           {config?.apiKeyConfigured ? (
@@ -665,30 +701,36 @@ function ServiceRow({
                   setDraft({ ...draft, createService: e.target.checked })
                 }
               />
-              名称尚未定义时，通过 API 创建 Tailscale Service
+              {t(
+                "Create the Tailscale Service through the API if this name is not yet defined",
+              )}
             </label>
           ) : (
             <p className="help">
-              请先在 Tailscale 控制台定义{" "}
-              <code>svc:{draft.name || "<名称>"}</code>（tcp:{publicPort(draft)}
-              ）。
+              {t(
+                "First define {0} ({1}) in the Tailscale console.",
+                `svc:${draft.name || t("<name>")}`,
+                `tcp:${publicPort(draft)}`,
+              )}
             </p>
           )}
           {tail?.state !== "Running" && (
             <p className="help">
-              节点尚未连接。可以先保存服务配置，接入后会发布。
+              {t(
+                "The node is disconnected. You can save the service configuration; it will publish after connecting.",
+              )}
               <button
                 type="button"
                 className="text-button"
                 onClick={onSettings}
               >
-                连接设置
+                {t("Connection settings")}
               </button>
             </p>
           )}
           {error && (
             <div className="notice error" role="alert">
-              {error}
+              {message(error)}
             </div>
           )}
           <div className="quick-publish-actions">
@@ -698,7 +740,7 @@ function ServiceRow({
               disabled={busy}
               onClick={() => onConfigure(draft)}
             >
-              完整配置
+              {t("Full configuration")}
               <ArrowUpRight size={14} />
             </button>
             <button
@@ -711,7 +753,7 @@ function ServiceRow({
               ) : (
                 <Globe size={16} />
               )}
-              发布到 tailnet
+              {t("Publish to tailnet")}
             </button>
           </div>
         </form>

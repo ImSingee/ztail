@@ -1,6 +1,6 @@
+import { buildID } from "./build-id";
 import { test, expect, Page } from "@playwright/test";
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 const assets = process.env.ZTAIL_EVIDENCE_DIR || "test-results/evidence";
 mkdirSync(assets, { recursive: true });
 async function login(page: Page) {
@@ -35,14 +35,7 @@ async function capture(page: Page, name: string) {
 }
 test.beforeEach(async ({ request }) => {
   await request.get("/fixture/reset");
-  const hash = createHash("sha256")
-    .update(readFileSync("src/main.tsx"))
-    .update(readFileSync("src/catalog.tsx"))
-    .update(readFileSync("src/policy-guide.tsx"))
-    .update(readFileSync("../internal/ztail/manager.go"))
-    .update(readFileSync("../internal/ztail/tailnet.go"))
-    .digest("hex")
-    .slice(0, 12);
+  const hash = buildID();
   const health = await (await request.get("/healthz")).json();
   expect(health.version).toBe("e2e-" + hash);
   writeFileSync(

@@ -68,7 +68,7 @@ func TestAuthKeyRegistersFreshNode(t *testing.T) {
 	tail.connectStarted = time.Now().Add(-91 * time.Second)
 	tail.connectMethod = "authkey"
 	tail.mu.Unlock()
-	if status := tail.Status(ctx); status.Connecting || !strings.Contains(status.Error, "90 秒") {
+	if status := tail.Status(ctx); status.Connecting || !strings.Contains(status.Error, "90 seconds") {
 		t.Fatalf("pending attempt must time out visibly: %+v", status)
 	}
 	if err := tail.Connect(ctx, "authkey", "tskey-auth-fixture-invalid"); err != nil {

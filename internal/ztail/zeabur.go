@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,9 +27,10 @@ type ServicePort struct {
 	Type string `json:"type"`
 }
 type ServiceEnvironment struct {
-	Status string        `json:"status"`
-	Ports  []ServicePort `json:"ports"`
-	Error  string        `json:"error"`
+	ErrorInfo *MessageInfo  `json:"errorInfo,omitempty"`
+	Status    string        `json:"status"`
+	Ports     []ServicePort `json:"ports"`
+	Error     string        `json:"error"`
 }
 type Project struct {
 	NamedID
@@ -41,10 +41,11 @@ type Project struct {
 	} `json:"region"`
 }
 type Catalog struct {
-	Server    NamedID   `json:"server"`
-	Projects  []Project `json:"projects"`
-	UpdatedAt string    `json:"updatedAt"`
-	Error     string    `json:"error"`
+	ErrorInfo *MessageInfo `json:"errorInfo,omitempty"`
+	Server    NamedID      `json:"server"`
+	Projects  []Project    `json:"projects"`
+	UpdatedAt string       `json:"updatedAt"`
+	Error     string       `json:"error"`
 }
 type CatalogProvider interface {
 	Catalog() Catalog
@@ -87,6 +88,7 @@ func (z *Zeabur) Refresh(ctx context.Context) (err error) {
 		if err != nil {
 			z.mu.Lock()
 			z.catalog.Error = strings.ReplaceAll(err.Error(), z.key, "[redacted]")
+			z.catalog.ErrorInfo = redactMessage(displayErrorMessage(err), func(s string) string { return strings.ReplaceAll(s, z.key, "[redacted]") })
 			z.mu.Unlock()
 		}
 	}()
@@ -121,16 +123,16 @@ func (z *Zeabur) Refresh(ctx context.Context) (err error) {
 		req.Header.Set("Authorization", "Bearer "+z.key)
 		resp, e := z.client.Do(req)
 		if e != nil {
-			return errors.New("Zeabur API 无法连接，请检查网络后重试")
+			return messageError("Zeabur API unreachable. Check the network and retry")
 		}
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
-			return fmt.Errorf("Zeabur API 返回 HTTP %d，请检查 API Key 和账号权限", resp.StatusCode)
+			return messageError("Zeabur API returned HTTP {0}. Check API Key and account permissions", resp.StatusCode)
 		}
 		e = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result)
 		resp.Body.Close()
 		if e != nil {
-			return errors.New("Zeabur API 返回无效数据")
+			return messageError("Zeabur API returned invalid data")
 		}
 		if len(result.Errors) > 0 {
 			return fmt.Errorf("Zeabur GraphQL: %s", result.Errors[0].Message)
@@ -144,7 +146,7 @@ func (z *Zeabur) Refresh(ctx context.Context) (err error) {
 				}
 			}
 			if cat.Server.ID == "" {
-				return errors.New("配置的 ZEABUR_SERVER_ID 不存在或当前账号无权访问")
+				return messageError("Configured ZEABUR_SERVER_ID does not exist or is inaccessible to this account")
 			}
 		}
 		added := 0
@@ -167,11 +169,11 @@ func (z *Zeabur) Refresh(ctx context.Context) (err error) {
 			return nil
 		}
 		if added == 0 {
-			return errors.New("Zeabur API 分页未推进，保留上一次完整目录")
+			return messageError("Zeabur API pagination did not advance. Previous complete catalog retained")
 		}
 		skip += len(result.Data.Projects.Edges)
 	}
-	return errors.New("Zeabur 目录超过查询安全上限，保留上一次完整目录")
+	return messageError("Zeabur catalog exceeds the query safety limit. Previous complete catalog retained")
 }
 
 // Ports and deployment status are environment-scoped in Zeabur. Batch aliases
@@ -222,20 +224,22 @@ func (z *Zeabur) loadServiceEnvironments(ctx context.Context, cat *Catalog) {
 		body, _ := json.Marshal(map[string]any{"query": "query(" + strings.Join(definitions, ",") + ") {" + strings.Join(fields, " ") + "}", "variables": variables})
 		req, requestErr := http.NewRequestWithContext(ctx, "POST", z.endpoint, bytes.NewReader(body))
 		if requestErr != nil {
-			cat.Error = "服务详情请求地址无效"
+			cat.Error = "Invalid service details request URL"
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+z.key)
 		batchError := ""
+		var batchInfo *MessageInfo
 		resp, err := z.client.Do(req)
 		if err != nil {
-			batchError = "服务详情无法连接，请刷新重试"
+			batchError = "Service details unreachable. Refresh to retry"
 		} else {
 			if resp.StatusCode != 200 {
-				batchError = fmt.Sprintf("服务详情返回 HTTP %d，请检查 API Key 和账号权限", resp.StatusCode)
+				batchInfo = messageInfo("Service details returned HTTP {0}. Check API Key and account permissions", resp.StatusCode)
+				batchError = batchInfo.Text()
 			} else if json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&result) != nil {
-				batchError = "服务详情返回无效数据"
+				batchError = "Service details returned invalid data"
 			}
 			resp.Body.Close()
 		}
@@ -249,16 +253,19 @@ func (z *Zeabur) loadServiceEnvironments(ctx context.Context, cat *Catalog) {
 				}
 			}
 			batchError = message
+			batchInfo = nil
 		}
 		for i, item := range batch {
 			svc := &cat.Projects[item.project].Services[item.service]
 			alias := fmt.Sprintf("s%d", i)
 			detail, message := result.Data[alias], batchError
+			info := batchInfo
 			if e := aliasErrors[alias]; e != "" {
 				message = e
+				info = nil
 			}
 			if detail == nil && message == "" {
-				message = "服务详情暂不可用，请刷新重试"
+				message = "Service details temporarily unavailable. Refresh to retry"
 			}
 			if message != "" {
 				failed++
@@ -267,6 +274,10 @@ func (z *Zeabur) loadServiceEnvironments(ctx context.Context, cat *Catalog) {
 					cached = old
 				}
 				cached.Error = message
+				cached.ErrorInfo = info
+				if cached.ErrorInfo == nil {
+					cached.ErrorInfo = textMessage(message)
+				}
 				svc.Environments[item.environment] = cached
 			} else {
 				if detail.Ports == nil {
@@ -277,6 +288,23 @@ func (z *Zeabur) loadServiceEnvironments(ctx context.Context, cat *Catalog) {
 		}
 	}
 	if failed > 0 {
-		cat.Error = fmt.Sprintf("%d 个服务环境的详情读取失败，已保留上次可用数据。刷新可重试。", failed)
+		cat.ErrorInfo = messageInfo("Could not load details for {0} service environments. Previous available data retained. Refresh to retry.", failed)
+		cat.Error = cat.ErrorInfo.Text()
 	}
+}
+
+func (value Catalog) MarshalJSON() ([]byte, error) {
+	type plain Catalog
+	if value.ErrorInfo == nil {
+		value.ErrorInfo = displayTextMessage(value.Error)
+	}
+	return json.Marshal(plain(value))
+}
+
+func (value ServiceEnvironment) MarshalJSON() ([]byte, error) {
+	type plain ServiceEnvironment
+	if value.ErrorInfo == nil {
+		value.ErrorInfo = displayTextMessage(value.Error)
+	}
+	return json.Marshal(plain(value))
 }

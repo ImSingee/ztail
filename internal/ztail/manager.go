@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"slices"
@@ -13,15 +12,16 @@ import (
 )
 
 type RuleStatus struct {
-	ID              string `json:"id"`
-	State           string `json:"state"`
-	Error           string `json:"error"`
-	URL             string `json:"url"`
-	AppliedRevision int64  `json:"appliedRevision"`
-	Backend         string `json:"backend"`
-	Approval        string `json:"approval"`
-	ActiveURL       string `json:"activeUrl"`
-	ActiveTarget    string `json:"activeTarget"`
+	ErrorInfo       *MessageInfo `json:"errorInfo,omitempty"`
+	ID              string       `json:"id"`
+	State           string       `json:"state"`
+	Error           string       `json:"error"`
+	URL             string       `json:"url"`
+	AppliedRevision int64        `json:"appliedRevision"`
+	Backend         string       `json:"backend"`
+	Approval        string       `json:"approval"`
+	ActiveURL       string       `json:"activeUrl"`
+	ActiveTarget    string       `json:"activeTarget"`
 }
 type RuleView struct {
 	Rule
@@ -29,8 +29,9 @@ type RuleView struct {
 	Target string     `json:"target"`
 }
 type withdrawal struct {
-	RuleID string `json:"ruleId"`
-	Error  string `json:"error"`
+	ErrorInfo *MessageInfo `json:"errorInfo,omitempty"`
+	RuleID    string       `json:"ruleId"`
+	Error     string       `json:"error"`
 }
 type Manager struct {
 	mu          sync.Mutex
@@ -129,7 +130,7 @@ func (m *Manager) saveWithdrawalsLocked() error {
 func (m *Manager) queueWithdrawal(name, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.pending[name] = withdrawal{RuleID: id, Error: "撤回尚未完成，将自动重试"}
+	m.pending[name] = withdrawal{RuleID: id, Error: "Withdrawal not complete; retrying automatically"}
 	return m.saveWithdrawalsLocked()
 }
 func (m *Manager) loadWithdrawals() error {
@@ -158,10 +159,12 @@ func (m *Manager) flushWithdrawals(ctx context.Context) {
 			delete(m.pending, name)
 		} else {
 			p.Error = m.cfg.Redact(err.Error())
+			p.ErrorInfo = redactMessage(displayErrorMessage(err), m.cfg.Redact)
 			m.pending[name] = p
 		}
 		if e := m.saveWithdrawalsLocked(); e != nil {
-			p.Error = "无法保存撤回状态，将自动重试"
+			p.Error = "Could not save withdrawal state; retrying automatically"
+			p.ErrorInfo = textMessage(p.Error)
 			m.pending[name] = p
 		}
 		m.mu.Unlock()
@@ -176,7 +179,7 @@ func (m *Manager) Reconcile(parent context.Context) {
 	}
 	if err = m.loadWithdrawals(); err != nil {
 		for _, r := range rules {
-			m.setState(r.ID, RuleStatus{ID: r.ID, State: "error", Error: "无法读取撤回记录，请检查数据卷"})
+			m.setState(r.ID, RuleStatus{ID: r.ID, State: "error", Error: "Could not read withdrawal records. Check the data volume"})
 		}
 		return
 	}
@@ -188,7 +191,7 @@ func (m *Manager) Reconcile(parent context.Context) {
 		r, ok := desired[id]
 		if !ok || !r.Enabled {
 			if err = m.queueWithdrawal(rt.rule.Name, id); err != nil {
-				m.setState(id, RuleStatus{ID: id, State: "error", Error: "无法记录撤回操作，请检查数据卷"})
+				m.setState(id, RuleStatus{ID: id, State: "error", Error: "Could not record withdrawal. Check the data volume"})
 				continue
 			}
 			_ = rt.Close()
@@ -211,7 +214,7 @@ func (m *Manager) Reconcile(parent context.Context) {
 		if e != nil {
 			cancel()
 			for _, r := range rules {
-				m.setState(r.ID, RuleStatus{ID: r.ID, State: "error", Error: "无法核对节点广告，暂停应用配置"})
+				m.setState(r.ID, RuleStatus{ID: r.ID, State: "error", Error: "Could not verify node advertisements; configuration apply paused"})
 			}
 			return
 		}
@@ -249,6 +252,7 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 	fail := func(err error) {
 		st.State = "error"
 		st.Error = m.cfg.Redact(err.Error())
+		st.ErrorInfo = redactMessage(displayErrorMessage(err), m.cfg.Redact)
 		if rt != nil {
 			st.AppliedRevision = rt.rule.Revision
 			st.State = "update_failed"
@@ -263,6 +267,7 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 		if p.RuleID == r.ID || name == r.Name {
 			pending = true
 			st.Error = p.Error
+			st.ErrorInfo = p.ErrorInfo
 			break
 		}
 	}
@@ -277,18 +282,18 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 	}
 	if !r.Enabled {
 		if rt != nil {
-			fail(errors.New("撤回未完成，请检查数据卷后重试"))
+			fail(messageError("Withdrawal not complete. Check the data volume and retry"))
 		} else {
 			m.setState(r.ID, st)
 		}
 		return
 	}
 	if ts.State != "Running" {
-		fail(errors.New("Tailscale 尚未连接，请完成节点授权"))
+		fail(messageError("Tailscale disconnected. Complete node authorization"))
 		return
 	}
 	if !slices.Contains(ts.Tags, m.cfg.NodeTag()) {
-		fail(fmt.Errorf("节点尚未获得 %s，请检查 tagOwners 与节点 tag", m.cfg.NodeTag()))
+		fail(messageError("Node has not received {0}. Check tagOwners and the node tag", m.cfg.NodeTag()))
 		return
 	}
 	bound, err := m.store.Setting("tailnet")
@@ -306,7 +311,7 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 			delete(m.running, r.ID)
 			rt = nil
 		}
-		fail(errors.New("当前 tailnet 与已保存规则不一致，已停止发布；请恢复原 tailnet"))
+		fail(messageError("Current tailnet differs from saved rules. Publishing stopped; restore the original tailnet"))
 		return
 	}
 	if bound == "" {
@@ -323,15 +328,15 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 		return
 	}
 	if !ts.MagicDNS {
-		fail(errors.New("请在 Tailscale 控制台开启 MagicDNS"))
+		fail(messageError("Enable MagicDNS in the Tailscale console"))
 		return
 	}
 	if r.Protocol != "tcp" && !ts.HTTPS {
-		fail(errors.New("请在 Tailscale 控制台开启 HTTPS 证书"))
+		fail(messageError("Enable HTTPS certificates in the Tailscale console"))
 		return
 	}
 	if r.Source == "zeabur" && !m.catalog.Contains(r) {
-		fail(errors.New("目录中找不到所选项目、环境或服务，请刷新 Zeabur 目录"))
+		fail(messageError("The selected project, environment or service is missing from the catalog. Refresh the Zeabur catalog"))
 		return
 	}
 	if m.cfg.TailscaleKey != "" {
@@ -341,7 +346,7 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 		}
 	} else {
 		if r.CreateService {
-			fail(errors.New("创建 Service 需要配置 TAILSCALE_API_KEY"))
+			fail(messageError("Creating a Service requires TAILSCALE_API_KEY"))
 			return
 		}
 		defs, e := m.tail.Services(ctx)
@@ -351,7 +356,7 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 		}
 		def, ok := defs["svc:"+r.Name]
 		if !ok {
-			fail(errors.New("Service 未定义或对本节点不可见，请在控制台定义 svc:" + r.Name + "，并配置访问策略"))
+			fail(messageError("Service undefined or not visible to this node. Define svc:{0} and configure its access policy.", r.Name))
 			return
 		}
 		if e = compatiblePorts(def.Ports, r.ServicePort()); e != nil {
@@ -377,7 +382,7 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 		rt = nil
 		if err != nil {
 			cleanupErr := m.queueWithdrawal(previous.rule.Name, r.ID)
-			fail(errors.Join(errors.New("旧 Service 监听清理失败，将自动重试"), err, cleanupErr))
+			fail(errors.Join(messageError("Old Service listener cleanup failed; retrying automatically"), err, cleanupErr))
 			return
 		}
 	}
@@ -389,10 +394,10 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 				rt = startRuntime(previous.rule, oldListener, previous.target)
 				m.running[r.ID] = rt
 			} else {
-				e = errors.Join(e, fmt.Errorf("原入口恢复失败: %w", restoreErr))
+				e = errors.Join(e, messageError("Could not restore previous endpoint: {0}", restoreErr))
 			}
 		}
-		fail(errors.New("Service 广告失败: " + e.Error()))
+		fail(messageError("Service advertisement failed: {0}", e))
 		return
 	}
 	next := startRuntime(r, ln, r.Target(m.cfg.ClusterDomain))
@@ -436,4 +441,38 @@ func (m *Manager) probe(ctx context.Context, r Rule) string {
 	}
 	resp.Body.Close()
 	return "reachable"
+}
+
+func (value RuleStatus) MarshalJSON() ([]byte, error) {
+	type plain RuleStatus
+	if value.ErrorInfo == nil {
+		value.ErrorInfo = displayTextMessage(value.Error)
+	}
+	return json.Marshal(plain(value))
+}
+
+func (value withdrawal) MarshalJSON() ([]byte, error) {
+	type plain withdrawal
+	if value.ErrorInfo == nil {
+		value.ErrorInfo = displayTextMessage(value.Error)
+	}
+	return json.Marshal(plain(value))
+}
+
+func (m *Manager) WithdrawalMessages() []*MessageInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []*MessageInfo{}
+	for name, p := range m.pending {
+		info := p.ErrorInfo
+		if info == nil {
+			info = textMessage(p.Error)
+		}
+		var reason any = p.Error
+		if info != nil {
+			reason = info
+		}
+		out = append(out, messageInfo("svc:{0}: {1}", name, reason))
+	}
+	return out
 }

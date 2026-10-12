@@ -1547,3 +1547,32 @@ footer {
     grid-template-columns: 110px minmax(0, 1fr);
   }
 }
+
+.language-switcher {
+  width: auto;
+  min-width: 104px;
+  flex-shrink: 0;
+  font-size: 13px;
+  padding: 7px 9px;
+}
+.login-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 2.5rem;
+}
+.topbar > .language-switcher {
+  margin-left: auto;
+}
+.topbar > .logout {
+  margin-left: 0;
+}
+@media (max-width: 760px) {
+  .topbar > .language-switcher {
+    margin-left: auto;
+  }
+  .topbar > .logout {
+    margin-left: 0;
+  }
+}

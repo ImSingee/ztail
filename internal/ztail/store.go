@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -37,42 +36,42 @@ type Rule struct {
 
 func (r Rule) Validate() error {
 	if !labelPattern.MatchString(r.Name) {
-		return errors.New("名称需为 1–63 位小写字母、数字或连字符，首尾不能为连字符")
+		return messageError("Names must contain 1\u201363 lowercase letters, digits or hyphens, with no leading or trailing hyphen")
 	}
 	if r.Protocol != "http" && r.Protocol != "https" && r.Protocol != "tcp" {
-		return errors.New("后端协议必须为 HTTP、HTTPS 或 TCP")
+		return messageError("Backend protocol must be HTTP, HTTPS or TCP")
 	}
 	if r.Port < 1 || r.Port > 65535 {
-		return errors.New("端口必须在 1–65535 之间")
+		return messageError("Port must be between 1 and 65535")
 	}
 	if r.PublishPort < 0 || r.PublishPort > 65535 || (r.Protocol == "tcp" && r.PublishPort == 0) {
-		return errors.New("发布端口必须在 1–65535 之间")
+		return messageError("Published port must be between 1 and 65535")
 	}
 	if r.Protocol != "tcp" && r.PublicPort() != 443 {
-		return errors.New("HTTP/HTTPS 服务的发布端口必须为 443")
+		return messageError("HTTP/HTTPS services must use published port 443")
 	}
 	switch r.Source {
 	case "zeabur":
 		for _, id := range []string{r.ProjectID, r.EnvironmentID, r.ServiceID} {
 			if !labelPattern.MatchString(id) {
-				return errors.New("请选择有效的项目、环境和服务")
+				return messageError("Select a valid project, environment and service")
 			}
 		}
 	case "manual":
 		if r.Host == "" || strings.TrimSpace(r.Host) != r.Host || strings.ContainsAny(r.Host, "/@?#:% \\\t\r\n") {
 			if net.ParseIP(r.Host) == nil {
-				return errors.New("后端地址只填写主机名或 IP，协议和端口单独设置")
+				return messageError("Enter only a backend hostname or IP; set protocol and port separately")
 			}
 		}
 		if net.ParseIP(r.Host) == nil {
 			for _, part := range strings.Split(r.Host, ".") {
 				if !labelPattern.MatchString(part) {
-					return errors.New("无效的后端主机名")
+					return messageError("Invalid backend hostname")
 				}
 			}
 		}
 	default:
-		return errors.New("请选择后端来源")
+		return messageError("Select a backend source")
 	}
 	return nil
 }
@@ -114,7 +113,7 @@ func (r Rule) Target(domain string) *url.URL {
 
 type Store struct{ db *sql.DB }
 
-var ErrConflict = errors.New("规则已被修改，请刷新后重试")
+var ErrConflict = messageError("This rule has changed. Refresh and retry")
 
 func OpenStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -203,7 +202,7 @@ func (s *Store) Save(r Rule) (Rule, error) {
 	}
 	_, err = tx.Exec("INSERT INTO rules(id,name,body) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,body=excluded.body", r.ID, r.Name, string(body))
 	if err != nil {
-		return r, fmt.Errorf("名称已被使用或规则无法保存: %w", err)
+		return r, messageError("Name already in use or rule could not be saved: {0}", err)
 	}
 	return r, tx.Commit()
 }

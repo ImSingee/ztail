@@ -172,7 +172,7 @@ func TestBrowserServer(t *testing.T) {
 					tail.state.Error = "invalid authkey"
 				case "timeout":
 					tail.state.Connecting = false
-					tail.state.Error = "Tailscale 接入尚未完成（等待超过 90 秒），请检查网络、Auth Key 和 tag 权限后重试；后台会继续尝试连接"
+					tail.state.Error = "Tailscale enrollment has taken over 90 seconds. Check the network, Auth Key and tag permissions, then retry. Connection attempts will continue in the background"
 				case "approval":
 					tail.state.Connecting = false
 					tail.state.Error = ""
@@ -236,7 +236,7 @@ func TestBrowserServer(t *testing.T) {
 					cat.Projects[0].Services[0].Environments = maps.Clone(cat.Projects[0].Services[0].Environments)
 					details := cat.Projects[0].Services[0].Environments["env-second"]
 					if enabled {
-						details.Error = "端口详情读取失败"
+						details.Error = "Failed to load port details"
 					} else {
 						details.Error = ""
 					}
