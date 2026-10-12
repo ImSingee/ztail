@@ -1,4 +1,4 @@
-FROM node:24-alpine AS frontend
+FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend
 WORKDIR /src/web
 RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
 COPY web/package.json web/pnpm-lock.yaml ./
@@ -6,14 +6,16 @@ RUN pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-FROM golang:1.27.1-alpine AS backend
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS backend
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /src/web/dist ./web/dist
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /ztail ./cmd/ztail
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /ztail ./cmd/ztail
 
 FROM alpine:3.23
 RUN apk add --no-cache ca-certificates && addgroup -g 10001 ztail && adduser -D -u 10001 -G ztail ztail && mkdir /data && chown ztail:ztail /data
