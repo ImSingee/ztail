@@ -149,6 +149,24 @@ func TestBrowserServer(t *testing.T) {
 				app.Manager.Wake()
 				w.Header().Set("Content-Type", "text/html")
 				io.WriteString(w, "<!doctype html><html><body><p>Fixture authorization complete</p></body></html>")
+			case "/fixture/auth-state":
+				tail.mu.Lock()
+				switch r.URL.Query().Get("state") {
+				case "error":
+					tail.state.Connecting = false
+					tail.state.Error = "invalid authkey"
+				case "timeout":
+					tail.state.Connecting = false
+					tail.state.Error = "Tailscale 接入尚未完成（等待超过 90 秒），请检查网络、Auth Key 和 tag 权限后重试；后台会继续尝试连接"
+				case "approval":
+					tail.state.Connecting = false
+					tail.state.Error = ""
+					tail.state.State = "NeedsMachineAuth"
+				case "health":
+					tail.state.Health = []string{"Unable to connect to the Tailscale coordination server"}
+				}
+				tail.mu.Unlock()
+				jsonResponse(w, 200, map[string]bool{"updated": true})
 			case "/fixture/audit":
 				tail.mu.Lock()
 				ads := []string{}

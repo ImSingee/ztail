@@ -17,6 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { ServiceCatalog } from "./catalog";
+import { PolicyError, PolicyGuide } from "./policy-guide";
 import "./style.css";
 
 export type Named = { _id: string; name: string };
@@ -52,6 +53,9 @@ export type Tail = {
   magicDns: boolean;
   https: boolean;
   error: string;
+  connecting?: boolean;
+  connectMethod?: string;
+  health?: string[];
 };
 export type Rule = {
   id: string;
@@ -245,8 +249,10 @@ function App() {
     [error, setError] = useState(""),
     [loadError, setLoadError] = useState(""),
     [busy, setBusy] = useState(false),
-    [deleting, setDeleting] = useState<RuleView | null>(null);
+    [deleting, setDeleting] = useState<RuleView | null>(null),
+    [policyRule, setPolicyRule] = useState<Rule | null>(null);
   const navigate = (p: string, draft?: Rule) => {
+    setPolicyRule(null);
     history.pushState({ draft }, "", p);
     setSeed(draft);
     setPath(p);
@@ -281,10 +287,12 @@ function App() {
     const pop = () => {
         setPath(location.pathname);
         setSeed(history.state?.draft);
+        setPolicyRule(null);
       },
       expired = () => {
         csrf = "";
         setSession(null);
+        setPolicyRule(null);
       };
     addEventListener("popstate", pop);
     addEventListener("session-expired", expired);
@@ -419,6 +427,7 @@ function App() {
             onConfigure={(draft) => navigate("/rules/new", draft)}
             onManage={(id) => navigate("/rules/" + id)}
             onSettings={() => navigate("/settings")}
+            onPolicy={setPolicyRule}
           />
         ) : editing ? (
           <>
@@ -576,7 +585,12 @@ function App() {
                       )}
                       {r.status.error && (
                         <>
-                          <div className="row-error">{r.status.error}</div>
+                          <div className="row-error">
+                            <PolicyError
+                              message={r.status.error}
+                              onOpen={() => setPolicyRule(ruleData(r))}
+                            />
+                          </div>
                           {r.status.activeUrl && (
                             <div className="status-note mono target">
                               当前入口：{r.status.activeUrl}
@@ -644,6 +658,18 @@ function App() {
         ztail <span className="mono">{session.version || "dev"}</span>
         <span>手动配置，明确发布</span>
       </footer>
+      {policyRule && (
+        <PolicyGuide
+          rule={policyRule}
+          config={config}
+          tail={tail}
+          onClose={() => setPolicyRule(null)}
+          onRetry={async () => {
+            await api("/rules/" + policyRule.id + "/retry", "POST", {});
+            await load();
+          }}
+        />
+      )}
       {deleting && (
         <div className="modal-backdrop">
           <section
@@ -1088,13 +1114,15 @@ function Connection({
                   "badge " + (tail?.state === "Running" ? "success" : "neutral")
                 }
               >
-                {tail?.state === "Running"
-                  ? "已连接"
-                  : tail?.state === "NeedsMachineAuth"
-                    ? "等待节点审批"
-                    : tail?.state === "NeedsLogin"
-                      ? "等待授权"
-                      : tail?.state || "读取中"}
+                {tail?.connecting
+                  ? "接入中"
+                  : tail?.state === "Running"
+                    ? "已连接"
+                    : tail?.state === "NeedsMachineAuth"
+                      ? "等待节点审批"
+                      : tail?.state === "NeedsLogin"
+                        ? "等待授权"
+                        : tail?.state || "读取中"}
               </span>
             </dd>
             <dt>Tailnet</dt>
@@ -1117,7 +1145,25 @@ function Connection({
                 : "未配置 · 绑定已有 Service"}
             </dd>
           </dl>
+          {tail?.connecting && (
+            <div className="notice auth-progress" role="status">
+              <Busy />
+              <div>
+                <div>
+                  {tail.connectMethod === "authkey"
+                    ? "正在使用 Auth Key 接入，等待 Tailscale 确认…"
+                    : "正在请求授权，请打开授权页面完成登录…"}
+                </div>
+                <p className="help">状态会自动更新；请求已接受不代表已连接。</p>
+              </div>
+            </div>
+          )}
           <ErrorBox message={tail?.error || ""} />
+          {tail?.health?.length ? (
+            <div className="notice" role="status">
+              Tailscale 健康提示：{tail.health.join("；")}
+            </div>
+          ) : null}
           <ErrorBox message={error} />
           {tail?.state === "NeedsMachineAuth" && (
             <div className="notice">
@@ -1140,17 +1186,27 @@ function Connection({
               >
                 {busy ? <Busy /> : <ArrowUpRight size={16} />}交互式授权
               </button>
-              {tail?.authUrl && (
-                <a
-                  className="authorization-link"
-                  href={tail.authUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  打开 Tailscale 授权页面
-                  <ArrowUpRight size={15} />
-                </a>
-              )}
+              {tail?.authUrl &&
+                !tail.connecting &&
+                tail.connectMethod === "authkey" && (
+                  <p className="help">
+                    Tailscale
+                    仍要求网页授权，请打开下方链接完成授权，或使用有效且有权分配节点
+                    tag 的 Auth Key 重试。
+                  </p>
+                )}
+              {tail?.authUrl &&
+                !(tail.connecting && tail.connectMethod === "authkey") && (
+                  <a
+                    className="authorization-link"
+                    href={tail.authUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    打开 Tailscale 授权页面
+                    <ArrowUpRight size={15} />
+                  </a>
+                )}
               <p className="help">
                 授权完成后会自动更新状态。授权账号需要有权分配配置的 tag。
               </p>

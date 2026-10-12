@@ -122,6 +122,8 @@ Zeabur 后端使用 `service-<serviceID>.environment-<environmentID>.svc.<cluste
 
 修改后端保留监听入口；改名先建立新入口，失败时保留旧入口。停用/删除只撤回本节点广告，保留远端 Service 定义。撤回失败持久化并自动重试；连接设置页也展示已删除规则遗留的撤回错误。重启会清理本节点遗留广告，再恢复启用规则。
 
+遇到「Service 未定义或对本节点不可见」时，点击错误中的「配置访问策略」打开当前服务指南。弹窗提供可复制的 Service name、HTTPS 443 端口、Service tag 和审批/访问策略片段，并链接到 Tailscale 控制台。配置保存后可从弹窗重试发布；指南不会代替你修改 tailnet 策略。
+
 “已广告”只表示本地声明承载 Service，审批状态未知时请以控制台为准。后端“可达”表示 HTTP/TLS 握手获得响应，不代表应用健康或所有 tailnet 用户均有访问权限。若后端使用自身证书，HTTPS 模式默认校验证书。
 
 支持 WebSocket、SSE 和上传。后端接收原始 Host、路径/query，以及 HTTPS 转发协议头；`X-Forwarded-For` 由代理生成，来自请求的伪造值不会直接转发。应用若限制 Host，需允许发布后的 tailnet 域名。
@@ -167,3 +169,5 @@ Playwright 启动的是独立 `_test.go` 程序：真实面板、HTTP 接口、S
 ## License
 
 MIT
+
+Auth Key 接入是异步流程：界面会先显示正在接入，只有节点进入 `Running` 才显示已连接；需要设备审批时会提供节点管理入口。无效 Key 等控制面错误、健康警告及超过 90 秒仍未完成的提示会显示在连接设置中，日志同步记录接入与状态变化并隐藏 Key。超时提示不会终止 SDK 的后台重试。Auth Key 必须是 `tskey-auth-`，API Key 不用于节点登录。

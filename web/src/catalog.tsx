@@ -25,6 +25,7 @@ import type {
   Tail,
   ZeaburService,
 } from "./main";
+import { PolicyError } from "./policy-guide";
 
 const webPort = (p: ServicePort) =>
   ["HTTP", "HTTPS"].includes(p.type.toUpperCase()) &&
@@ -117,6 +118,7 @@ type Props = {
   onConfigure: (rule: Rule) => void;
   onManage: (id: string) => void;
   onSettings: () => void;
+  onPolicy: (rule: Rule) => void;
 };
 
 export function ServiceCatalog(props: Props) {
@@ -381,6 +383,7 @@ function ServiceRow({
   onConfigure,
   onManage,
   onSettings,
+  onPolicy,
 }: Props & {
   project: Project;
   environment: Named;
@@ -494,7 +497,12 @@ function ServiceRow({
                 </a>
               )}
               {rule.status.error && (
-                <span className="row-error">{rule.status.error}</span>
+                <span className="row-error">
+                  <PolicyError
+                    message={rule.status.error}
+                    onOpen={() => onPolicy(rule)}
+                  />
+                </span>
               )}
             </div>
           ))}

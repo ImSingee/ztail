@@ -85,7 +85,13 @@ func (f *fakeTail) Connect(_ context.Context, method, key string) error {
 	if method == "authkey" && key == "" {
 		return errors.New("请输入 Auth Key")
 	}
-	f.state.AuthURL = "http://127.0.0.1:18080/fixture/authorize"
+	f.state.Error = ""
+	f.state.Connecting = true
+	f.state.ConnectMethod = method
+	f.state.AuthURL = ""
+	if method == "interactive" {
+		f.state.AuthURL = "http://127.0.0.1:18080/fixture/authorize"
+	}
 	return nil
 }
 func (f *fakeTail) Services(context.Context) (map[string]ServiceDefinition, error) {

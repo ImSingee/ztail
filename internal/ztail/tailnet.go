@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -17,17 +19,20 @@ import (
 )
 
 type TailStatus struct {
-	State     string   `json:"state"`
-	AuthURL   string   `json:"authUrl"`
-	Tailnet   string   `json:"tailnet"`
-	DNSSuffix string   `json:"dnsSuffix"`
-	Hostname  string   `json:"hostname"`
-	NodeID    string   `json:"nodeId"`
-	Tags      []string `json:"tags"`
-	IPs       []string `json:"ips"`
-	MagicDNS  bool     `json:"magicDns"`
-	HTTPS     bool     `json:"https"`
-	Error     string   `json:"error"`
+	State         string   `json:"state"`
+	AuthURL       string   `json:"authUrl"`
+	Tailnet       string   `json:"tailnet"`
+	DNSSuffix     string   `json:"dnsSuffix"`
+	Hostname      string   `json:"hostname"`
+	NodeID        string   `json:"nodeId"`
+	Tags          []string `json:"tags"`
+	IPs           []string `json:"ips"`
+	MagicDNS      bool     `json:"magicDns"`
+	HTTPS         bool     `json:"https"`
+	Error         string   `json:"error"`
+	Connecting    bool     `json:"connecting"`
+	ConnectMethod string   `json:"connectMethod"`
+	Health        []string `json:"health"`
 }
 type ServiceDefinition struct {
 	Name  string   `json:"name"`
@@ -44,11 +49,24 @@ type Tailnet interface {
 	Close() error
 }
 type EmbeddedTailnet struct {
-	mu          sync.Mutex
-	cfg         Config
-	server      *tsnet.Server
-	watchCancel context.CancelFunc
-	lastError   string
+	mu             sync.Mutex
+	cfg            Config
+	server         *tsnet.Server
+	watchCancel    context.CancelFunc
+	lastError      string
+	connectStarted time.Time
+	connectMethod  string
+	lastState      string
+	lastHealth     string
+}
+
+var tailscaleSecret = regexp.MustCompile(`tskey-[A-Za-z0-9_-]+`)
+
+func (t *EmbeddedTailnet) redact(message string) string {
+	return tailscaleSecret.ReplaceAllString(t.cfg.Redact(message), "[redacted]")
+}
+func (t *EmbeddedTailnet) logf(format string, args ...any) {
+	log.Printf("[tailscale] %s", t.redact(fmt.Sprintf(format, args...)))
 }
 
 func NewTailnet(c Config) *EmbeddedTailnet { return &EmbeddedTailnet{cfg: c} }
@@ -56,7 +74,12 @@ func (t *EmbeddedTailnet) startLocked() error {
 	if t.server != nil {
 		return nil
 	}
-	s := &tsnet.Server{Dir: filepath.Join(t.cfg.DataDir, "tailscale"), Hostname: "ztail", AdvertiseTags: []string{t.cfg.NodeTag()}, Ephemeral: false, UserLogf: func(string, ...any) {}}
+	s := &tsnet.Server{Dir: filepath.Join(t.cfg.DataDir, "tailscale"), Hostname: "ztail", AdvertiseTags: []string{t.cfg.NodeTag()}, Ephemeral: false, UserLogf: func(format string, args ...any) { t.logf(format, args...) }}
+	return t.startServerLocked(s)
+}
+
+// startServerLocked owns server startup and asynchronous state observation.
+func (t *EmbeddedTailnet) startServerLocked(s *tsnet.Server) error {
 	if err := os.MkdirAll(s.Dir, 0700); err != nil {
 		return err
 	}
@@ -67,27 +90,57 @@ func (t *EmbeddedTailnet) startLocked() error {
 	t.server = s
 	watchCtx, cancel := context.WithCancel(context.Background())
 	t.watchCancel = cancel
-	if lc, e := s.LocalClient(); e == nil {
-		if watcher, e := lc.WatchIPNBus(watchCtx, ipn.NotifyInitialState); e == nil {
-			go func() {
-				defer watcher.Close()
-				for {
-					notification, e := watcher.Next()
-					if e != nil {
-						return
-					}
+	lc, err := s.LocalClient()
+	if err != nil {
+		cancel()
+		s.Close()
+		t.server = nil
+		return err
+	}
+	watcher, err := lc.WatchIPNBus(watchCtx, ipn.NotifyInitialState)
+	if err != nil {
+		cancel()
+		s.Close()
+		t.server = nil
+		return err
+	}
+	go func() {
+		defer watcher.Close()
+		for {
+			notification, e := watcher.Next()
+			if e != nil {
+				if watchCtx.Err() == nil {
 					t.mu.Lock()
-					if notification.ErrMessage != nil && *notification.ErrMessage != "" {
-						t.lastError = "Tailscale 接入失败，请检查 Auth Key、tag 权限或网络后重试"
-					}
-					if notification.State != nil && *notification.State == ipn.Running {
-						t.lastError = ""
-					}
+					t.lastError = "Tailscale 状态监听中断，请重启 ztail"
+					t.connectStarted = time.Time{}
+					t.logf("%s", t.lastError)
 					t.mu.Unlock()
 				}
-			}()
+				return
+			}
+			t.mu.Lock()
+			if notification.ErrMessage != nil && *notification.ErrMessage != "" {
+				message := t.redact(*notification.ErrMessage)
+				if t.lastError != message {
+					t.logf("接入失败: %s", message)
+				}
+				t.lastError = message
+				t.connectStarted = time.Time{}
+			}
+			if notification.State != nil {
+				state := notification.State.String()
+				if state != t.lastState {
+					t.logf("节点状态: %s", state)
+					t.lastState = state
+				}
+				if *notification.State == ipn.Running || *notification.State == ipn.NeedsMachineAuth {
+					t.lastError = ""
+					t.connectStarted = time.Time{}
+				}
+			}
+			t.mu.Unlock()
 		}
-	}
+	}()
 	return nil
 }
 func (t *EmbeddedTailnet) Status(ctx context.Context) TailStatus {
@@ -128,6 +181,29 @@ func (t *EmbeddedTailnet) Status(ctx context.Context) TailStatus {
 		out.MagicDNS = st.CurrentTailnet.MagicDNSEnabled
 	}
 	out.HTTPS = len(st.CertDomains) > 0
+	// Start is asynchronous: expose progress until the control plane responds.
+	if st.BackendState == "Running" || st.BackendState == "NeedsMachineAuth" {
+		t.connectStarted = time.Time{}
+		t.lastError = ""
+	}
+	if !t.connectStarted.IsZero() && time.Since(t.connectStarted) >= 90*time.Second {
+		t.connectStarted = time.Time{}
+		t.lastError = "Tailscale 接入尚未完成（等待超过 90 秒），请检查网络、Auth Key 和 tag 权限后重试；后台会继续尝试连接"
+		t.logf("%s", t.lastError)
+	}
+	out.Connecting = !t.connectStarted.IsZero()
+	out.ConnectMethod = t.connectMethod
+	for _, warning := range st.Health {
+		out.Health = append(out.Health, t.redact(warning))
+	}
+	slices.Sort(out.Health)
+	health := strings.Join(out.Health, "; ")
+	if health != t.lastHealth {
+		if health != "" {
+			t.logf("健康警告: %s", health)
+		}
+		t.lastHealth = health
+	}
 	out.Error = t.lastError
 	return out
 }
@@ -161,15 +237,27 @@ func (t *EmbeddedTailnet) Connect(ctx context.Context, method, key string) error
 		return errors.New("节点正在等待管理员审批，请到 Tailscale 控制台批准节点")
 	}
 	t.lastError = ""
-	prefs := &ipn.Prefs{WantRunning: true, Hostname: "ztail", AdvertiseTags: []string{t.cfg.NodeTag()}, CorpDNS: false}
+	prefs, err := lc.GetPrefs(ctx)
+	if err != nil {
+		return errors.New("无法读取 Tailscale 接入配置")
+	}
+	prefs.WantRunning = true
+	prefs.LoggedOut = false
+	prefs.Hostname = "ztail"
+	prefs.AdvertiseTags = []string{t.cfg.NodeTag()}
+	prefs.CorpDNS = false
 	if err = lc.Start(ctx, ipn.Options{AuthKey: key, UpdatePrefs: prefs}); err != nil {
 		return errors.New("接入失败，请检查 Auth Key 的有效期和 tag 权限")
 	}
-	if method == "interactive" {
-		if err = lc.StartLoginInteractive(ctx); err != nil {
-			return errors.New("无法启动交互式授权，请重试")
-		}
+	// Start installs the AuthKey on a new control client, but does not log a
+	// fresh node in. Trigger login for BOTH methods, as tsnet.Start itself does.
+	// With a valid AuthKey the control plane registers the node without a browser.
+	if err = lc.StartLoginInteractive(ctx); err != nil {
+		return errors.New("无法启动 Tailscale 登录，请重试")
 	}
+	t.connectStarted = time.Now()
+	t.connectMethod = method
+	t.logf("开始节点接入: method=%s tag=%s", method, t.cfg.NodeTag())
 	return nil
 }
 func (t *EmbeddedTailnet) Services(ctx context.Context) (map[string]ServiceDefinition, error) {

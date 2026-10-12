@@ -4,7 +4,9 @@ import { readFileSync } from "node:fs";
 const buildID = createHash("sha256")
   .update(readFileSync("src/main.tsx"))
   .update(readFileSync("src/catalog.tsx"))
+  .update(readFileSync("src/policy-guide.tsx"))
   .update(readFileSync("../internal/ztail/manager.go"))
+  .update(readFileSync("../internal/ztail/tailnet.go"))
   .digest("hex")
   .slice(0, 12);
 export default defineConfig({

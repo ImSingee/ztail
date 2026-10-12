@@ -935,10 +935,9 @@ footer > span:last-child {
 .catalog-columns,
 .catalog-service-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.4fr) minmax(130px, 1fr) minmax(
-      80px,
-      0.6fr
-    ) minmax(130px, 0.85fr);
+  grid-template-columns:
+    minmax(180px, 1.4fr) minmax(130px, 1fr) minmax(80px, 0.6fr)
+    minmax(130px, 0.85fr);
   gap: 1rem;
   align-items: start;
   padding: 1.15rem 1.3rem;
@@ -1176,4 +1175,205 @@ footer > span:last-child {
   .catalog-project-heading svg {
     transition: none;
   }
+}
+
+.policy-link {
+  display: inline;
+  min-height: 0;
+  border: 0;
+  border-radius: 2px;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  white-space: normal;
+}
+.policy-link:hover {
+  background: transparent;
+}
+.policy-guide {
+  color: var(--ink);
+  width: 740px;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100dvh - 2rem);
+  padding: 0 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.policy-guide::backdrop {
+  background: oklch(0.15 0 0 / 0.4);
+}
+.policy-guide-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.3rem 0 0.8rem;
+  background: white;
+}
+.policy-guide-heading h2 {
+  margin: 0;
+  font-size: 1.13rem;
+  overflow-wrap: anywhere;
+}
+.policy-guide-heading button {
+  flex-shrink: 0;
+}
+.guide-step {
+  padding: 1.2rem 0;
+  border-top: 1px solid var(--line);
+}
+.guide-step h3 {
+  margin: 0 0 0.7rem;
+  font-size: 0.94rem;
+}
+.guide-step p {
+  font-size: 0.82rem;
+  margin: 0.5rem 0 0.9rem;
+}
+.guide-step p.help {
+  font-size: 0.75rem;
+}
+.guide-step-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  align-items: baseline;
+}
+.guide-step-heading a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+.guide-fields {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 0.7rem 1rem;
+  align-items: center;
+  margin: 1rem 0;
+}
+.guide-fields > label {
+  margin: 0;
+  font-size: 0.8rem;
+}
+.guide-field {
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.guide-field input,
+.guide-port {
+  flex: 1;
+  min-width: 0;
+}
+.guide-field input {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.8rem;
+  background: var(--surface);
+}
+.guide-field button {
+  font-size: 0.78rem;
+}
+.guide-port {
+  display: flex;
+  align-items: center;
+}
+.guide-port span {
+  font-size: 0.8rem;
+  color: var(--muted);
+  border: 1px solid oklch(0.79 0.012 230);
+  border-right: 0;
+  height: 42px;
+  padding: 0.6rem 0.65rem;
+  border-radius: 6px 0 0 6px;
+}
+.guide-port input {
+  border-radius: 0 6px 6px 0;
+}
+.guide-domain {
+  overflow-wrap: anywhere;
+  color: var(--primary);
+  padding: 0.7rem 0 0;
+}
+.guide-policy {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.guide-policy button {
+  font-size: 0.78rem;
+}
+.guide-policy pre {
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 1rem;
+  line-height: 1.7;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.74rem;
+}
+.guide-actions {
+  display: flex;
+  gap: 0.7rem;
+  justify-content: flex-end;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+  position: sticky;
+  bottom: 0;
+  background: white;
+}
+@media (max-width: 600px) {
+  .policy-guide {
+    padding: 0 1rem;
+  }
+  .policy-guide-heading {
+    padding-top: 1rem;
+  }
+  .policy-guide-heading h2 {
+    font-size: 1rem;
+  }
+  .guide-step-heading {
+    flex-direction: column;
+    gap: 0;
+    margin-bottom: 0.7rem;
+  }
+  .guide-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.4rem;
+  }
+  .guide-field {
+    margin-bottom: 0.4rem;
+  }
+  .guide-policy pre {
+    font-size: 0.7rem;
+  }
+}
+
+.auth-progress {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.auth-progress > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.auth-progress .help {
+  margin: 6px 0 0;
 }
