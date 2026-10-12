@@ -100,6 +100,7 @@ func TestBrowserServer(t *testing.T) {
 	}
 	go upstream.Serve(ln)
 	defer upstream.Close()
+	tcpAddress := tcpBackend(t, func(c *net.TCPConn) { io.Copy(c, c) })
 	assets, err := fs.Sub(web.Assets, "dist")
 	if err != nil {
 		t.Fatal(err)
@@ -200,6 +201,7 @@ func TestBrowserServer(t *testing.T) {
 				}
 				connects := append([]map[string]any{}, tail.connects...)
 				count := tail.listenCount
+				definitions := maps.Clone(tail.defs)
 				panelAddress := ""
 				if tail.panelListener != nil {
 					panelAddress = "http://" + tail.panelListener.Addr().String()
@@ -209,7 +211,15 @@ func TestBrowserServer(t *testing.T) {
 				calls := append([]map[string]any{}, registry.calls...)
 				registry.mu.Unlock()
 				rules, _ := app.Store.List()
-				jsonResponse(w, 200, map[string]any{"ads": ads, "addresses": addresses, "connects": connects, "listenCount": count, "panelAddress": panelAddress, "registryCalls": calls, "rules": rules})
+				jsonResponse(w, 200, map[string]any{"ads": ads, "addresses": addresses, "connects": connects, "listenCount": count, "panelAddress": panelAddress, "registryCalls": calls, "rules": rules, "definitions": definitions, "tcpBackendAddress": tcpAddress})
+			case "/fixture/define":
+				name := r.URL.Query().Get("name")
+				publicPort := r.URL.Query().Get("port")
+				tail.mu.Lock()
+				tail.defs["svc:"+name] = ServiceDefinition{Name: "svc:" + name, Ports: []string{"tcp:" + publicPort}, Tags: []string{"tag:ztail-service"}}
+				tail.mu.Unlock()
+				app.Manager.Wake()
+				jsonResponse(w, 200, map[string]bool{"defined": true})
 			case "/fixture/failure":
 				which := r.URL.Query().Get("kind")
 				enabled := r.URL.Query().Get("enabled") != "false"

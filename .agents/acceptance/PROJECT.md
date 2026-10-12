@@ -6,6 +6,7 @@ Go application in `internal/ztail`, production entry `cmd/ztail`, embedded Vite 
 - Install/build: `pnpm --dir web install --frozen-lockfile && pnpm --dir web build && go build -o ztail ./cmd/ztail`.
 - Production start: `./ztail`; required `ADMIN_PASSWORD`, `ZEABUR_API_KEY`, `ZEABUR_SERVER_ID`; `PORT` defaults 8080, `DATA_DIR` defaults /data.
 - Browser fixture: `ZTAIL_E2E=1 go test ./internal/ztail -run '^TestBrowserServer$' -count=1 -timeout=10m`. Actual App/SQLite/proxy, fixture Zeabur/Tailnet only. HTTP ports 18080 and optional-API 18090, upstream 18082.
+- A real TCP echo backend uses an ephemeral local port; read `tcpBackendAddress` from `/fixture/audit`. The same audit contains saved rules, Service definitions and advertised listener addresses. `/fixture/define?name=<name>&port=<port>` changes only the test control-plane definition for no-API publication.
 - Health: `/healthz`; inspect `version` build marker before evidence. Test fixture is compiled only in `_test.go`, never in shipped binary.
 - Stop only the process started by this round with SIGINT; fixture cleans its servers and temporary data.
 
@@ -18,3 +19,4 @@ Go application in `internal/ztail`, production entry `cmd/ztail`, embedded Vite 
 
 ## Constraints
 Only one deployment owns a state volume. Zeabur refresh never publishes automatically. Do not expose a production fixture mode. Docker runs as UID 10001; data mount must be writable by it.
+TCP endpoints do not require HTTPS capability; the node management panel and Web services still do. TCP probes establish a connection only and do not validate application authentication. An existing Service definition is never overwritten when the selected public port changes.

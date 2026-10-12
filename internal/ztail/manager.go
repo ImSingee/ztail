@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 	"sync"
@@ -243,9 +244,7 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
 	st := RuleStatus{ID: r.ID, State: "draft", Backend: "unknown", Approval: "unknown"}
-	if ts.DNSSuffix != "" {
-		st.URL = "https://" + r.Name + "." + ts.DNSSuffix
-	}
+	st.URL = r.AccessURL(ts.DNSSuffix)
 	rt := m.running[r.ID]
 	fail := func(err error) {
 		st.State = "error"
@@ -253,7 +252,7 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 		if rt != nil {
 			st.AppliedRevision = rt.rule.Revision
 			st.State = "update_failed"
-			st.ActiveURL = "https://" + rt.rule.Name + "." + ts.DNSSuffix
+			st.ActiveURL = rt.rule.AccessURL(ts.DNSSuffix)
 			st.ActiveTarget = rt.target.String()
 		}
 		m.setState(r.ID, st)
@@ -323,8 +322,12 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 		m.setState(r.ID, st)
 		return
 	}
-	if !ts.MagicDNS || !ts.HTTPS {
-		fail(errors.New("请在 Tailscale 控制台开启 MagicDNS 和 HTTPS 证书"))
+	if !ts.MagicDNS {
+		fail(errors.New("请在 Tailscale 控制台开启 MagicDNS"))
+		return
+	}
+	if r.Protocol != "tcp" && !ts.HTTPS {
+		fail(errors.New("请在 Tailscale 控制台开启 HTTPS 证书"))
 		return
 	}
 	if r.Source == "zeabur" && !m.catalog.Contains(r) {
@@ -332,7 +335,7 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 		return
 	}
 	if m.cfg.TailscaleKey != "" {
-		if err = m.registry.Ensure(ctx, ts.Tailnet, r.Name, r.CreateService); err != nil {
+		if err = m.registry.Ensure(ctx, ts.Tailnet, r); err != nil {
 			fail(err)
 			return
 		}
@@ -351,12 +354,12 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 			fail(errors.New("Service 未定义或对本节点不可见，请在控制台定义 svc:" + r.Name + "，并配置访问策略"))
 			return
 		}
-		if e = compatiblePorts(def.Ports); e != nil {
+		if e = compatiblePorts(def.Ports, r.ServicePort()); e != nil {
 			fail(e)
 			return
 		}
 	}
-	if rt != nil && rt.rule.Name == r.Name {
+	if rt != nil && rt.rule.SameListener(r) {
 		rt.swap(r, r.Target(m.cfg.ClusterDomain))
 		st.State = "advertised"
 		st.AppliedRevision = r.Revision
@@ -364,8 +367,31 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 		m.setState(r.ID, st)
 		return
 	}
-	ln, e := m.tail.Listen(ctx, r.Name)
+	// A mode/port change of the same Service must rebuild its listener. Close
+	// before opening to also support TCP↔HTTP changes on the same public port.
+	var previous *runtimeRule
+	if rt != nil && rt.rule.Name == r.Name {
+		previous = rt
+		delete(m.running, r.ID)
+		err := rt.Close()
+		rt = nil
+		if err != nil {
+			cleanupErr := m.queueWithdrawal(previous.rule.Name, r.ID)
+			fail(errors.Join(errors.New("旧 Service 监听清理失败，将自动重试"), err, cleanupErr))
+			return
+		}
+	}
+	ln, e := m.tail.Listen(ctx, r)
 	if e != nil {
+		if previous != nil {
+			oldListener, restoreErr := m.tail.Listen(ctx, previous.rule)
+			if restoreErr == nil {
+				rt = startRuntime(previous.rule, oldListener, previous.target)
+				m.running[r.ID] = rt
+			} else {
+				e = errors.Join(e, fmt.Errorf("原入口恢复失败: %w", restoreErr))
+			}
+		}
 		fail(errors.New("Service 广告失败: " + e.Error()))
 		return
 	}
@@ -390,6 +416,14 @@ func (m *Manager) reconcileRule(parent context.Context, r Rule, ts TailStatus) {
 func (m *Manager) probe(ctx context.Context, r Rule) string {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+	if r.Protocol == "tcp" {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", r.Target(m.cfg.ClusterDomain).Host)
+		if err != nil {
+			return "unreachable"
+		}
+		conn.Close()
+		return "reachable"
+	}
 	req, err := http.NewRequestWithContext(ctx, "HEAD", r.Target(m.cfg.ClusterDomain).String(), nil)
 	if err != nil {
 		return "unreachable"

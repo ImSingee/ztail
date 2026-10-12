@@ -3,7 +3,7 @@ kind: Template
 metadata:
   name: ztail
 spec:
-  description: 手动将 Zeabur / k3s Web 服务通过 Tailscale Services 发布为 HTTPS 地址。
+  description: 手动将 Zeabur / k3s Web 或 TCP 服务通过 Tailscale Services 发布到 tailnet。
   tags: [Tool, Networking]
   variables:
     - key: ZEABUR_API_KEY

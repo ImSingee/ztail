@@ -4,10 +4,10 @@
 product
 
 ## Users
-个人与小团队的 Zeabur Dedicated Server 管理员，在同一 k3s 集群内手动选择要发布到 tailnet 的 Web 服务。
+个人与小团队的 Zeabur Dedicated Server 管理员，在同一 k3s 集群内手动选择要发布到 tailnet 的 Web 或 TCP 服务。
 
 ## Product Purpose
-让管理员明确选择后端和名称，通过 Tailscale Services 获得稳定的 MagicDNS HTTPS 地址。发现服务不等于发布服务。
+让管理员明确选择后端和名称，通过 Tailscale Services 获得稳定的 MagicDNS 访问地址：Web 使用 HTTPS，TCP 使用独立主机名与发布端口。发现服务不等于发布服务。
 
 ## Brand Personality
 简洁、明确、克制。状态和操作结果优先于装饰。

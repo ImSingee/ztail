@@ -166,7 +166,7 @@ func TestNodePanelHTTPSCoexistsWithServices(t *testing.T) {
 	defer upstream.Close()
 	target, _ := url.Parse(upstream.URL)
 	for _, name := range []string{"panel-one", "panel-two"} {
-		ln, e := tail.Listen(ctx, name)
+		ln, e := tail.Listen(ctx, Rule{Name: name, Protocol: "http", Source: "manual", Host: "127.0.0.1", Port: 80})
 		if e != nil {
 			t.Fatal(e)
 		}
