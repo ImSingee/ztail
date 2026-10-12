@@ -1433,29 +1433,6 @@ footer > span:last-child {
   outline: 3px solid oklch(0.71 0.095 230);
   outline-offset: 3px;
 }
-.policy-confirm {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.65rem;
-  max-width: 800px;
-  font-size: 0.875rem;
-  line-height: 1.65;
-}
-.policy-confirm input {
-  appearance: auto;
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-  padding: 0;
-  margin: 2px 0 0;
-  accent-color: var(--primary);
-}
-.auth-prerequisite {
-  color: var(--primary);
-  font-size: 0.875rem;
-  line-height: 1.65;
-  margin-top: 0;
-}
 .setup-policy .button-link {
   display: inline-flex;
   align-items: center;
@@ -1481,4 +1458,52 @@ footer > span:last-child {
 }
 .auth-controls button[aria-busy="true"] {
   cursor: wait;
+}
+
+.server-context {
+  border-top: 1px solid var(--line);
+  padding: 1.3rem 0;
+  margin-bottom: 1.5rem;
+}
+.server-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 1rem 0;
+  gap: 1.4rem;
+}
+.server-facts dt {
+  margin-bottom: 0.5rem;
+}
+.node-settings {
+  max-width: 800px;
+}
+.connected-policy {
+  border-top: 1px solid var(--line);
+  padding-top: 1.1rem;
+  margin-top: 1.5rem;
+}
+.connected-policy > summary {
+  font-size: 0.9rem;
+  color: var(--primary);
+  cursor: pointer;
+  padding: 0.5rem 0;
+}
+.connected-policy > summary:focus-visible {
+  outline: 3px solid oklch(0.71 0.095 230);
+  outline-offset: 3px;
+}
+.connected-policy .setup-policy {
+  border-top: 0;
+  padding-top: 1rem;
+  margin-bottom: 0;
+}
+@media (max-width: 760px) {
+  .server-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 460px) {
+  .server-facts {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
 }

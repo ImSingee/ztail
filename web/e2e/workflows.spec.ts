@@ -135,11 +135,6 @@ test("interactive opens authorization tab; custom tag and policy stay visible", 
 }) => {
   await login(page);
   await page.getByRole("link", { name: "连接设置", exact: true }).click();
-  await page
-    .getByRole("checkbox", {
-      name: "我已将策略片段合并到现有策略，并在 Tailscale 保存",
-    })
-    .check();
   const [popup] = await Promise.all([
     page.waitForEvent("popup"),
     page.getByRole("button", { name: "交互式授权" }).click(),
@@ -152,7 +147,7 @@ test("interactive opens authorization tab; custom tag and policy stay visible", 
   });
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "交互式授权" })).toHaveCount(0);
-  await page.getByText("查看需要合并的策略片段", { exact: true }).click();
+  await page.getByText("访问策略与合并片段", { exact: true }).click();
   await expect(page.locator("pre")).toContainText("tag:custom-host");
   await capture(page, "connected-settings");
   await popup.close();
