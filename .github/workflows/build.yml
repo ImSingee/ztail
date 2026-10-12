@@ -32,7 +32,6 @@ jobs:
           name: playwright-results
           path: web/test-results/
   image:
-    needs: verify
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
