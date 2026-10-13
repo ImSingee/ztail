@@ -1,3 +1,4 @@
+import { useI18n, asMessage, type Message } from "./i18n";
 import {
   useEffect,
   useLayoutEffect,
@@ -17,29 +18,32 @@ import type { Config, Rule, Tail } from "./main";
 import { accessPreview, publicPort, rulePolicy } from "./rule-helpers";
 
 export function PolicyError({
-  message,
+  message: value,
   onOpen,
 }: {
-  message: string;
+  message: Message;
   onOpen: () => void;
 }) {
-  const text = "配置访问策略";
-  const position = message.indexOf(text);
-  if (position < 0) return <>{message}</>;
+  const { t, message } = useI18n();
   return (
     <>
-      {message.slice(0, position)}
-      <button type="button" className="policy-link" onClick={onOpen}>
-        {text}
-      </button>
-      {message.slice(position + text.length)}
+      {message(value)}
+      {typeof value === "object" && value.action === "policy" && (
+        <>
+          {" "}
+          <button type="button" className="policy-link" onClick={onOpen}>
+            {t("Configure access policy")}
+          </button>
+        </>
+      )}
     </>
   );
 }
 
 function CopyValue({ value, label }: { value: string; label: string }) {
+  const { t, message } = useI18n();
   const [copied, setCopied] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState<Message>("");
   useEffect(() => {
     if (!copied) return;
     const timer = setTimeout(() => setCopied(false), 1600);
@@ -49,23 +53,23 @@ function CopyValue({ value, label }: { value: string; label: string }) {
     <>
       <button
         type="button"
-        aria-label={"复制 " + label}
+        aria-label={t("Copy {0}", label)}
         onClick={async () => {
           try {
             await navigator.clipboard.writeText(value);
             setCopied(true);
             setError("");
           } catch {
-            setError("复制失败，请选择内容手动复制。");
+            setError("Copy failed. Select the content and copy it manually.");
           }
         }}
       >
         {copied ? <Check size={15} /> : <Copy size={15} />}
-        {copied ? "已复制" : "复制"}
+        {copied ? t("Copied") : t("Copy")}
       </button>
       {error && (
         <span className="row-error" role="alert">
-          {error}
+          {message(error)}
         </span>
       )}
     </>
@@ -121,9 +125,10 @@ export function PolicyGuide({
   onClose: () => void;
   onRetry: () => Promise<void>;
 }) {
+  const { t, message } = useI18n();
   const dialog = useModalDialog();
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState<Message>("");
   const policy = config
     ? JSON.stringify(rulePolicy(config, rule), null, 2)
     : "";
@@ -141,11 +146,13 @@ export function PolicyGuide({
       }}
     >
       <div className="policy-guide-heading">
-        <h2 id="policy-guide-title">配置 {rule.name} 的访问策略</h2>
+        <h2 id="policy-guide-title">
+          {t("Configure access policy for {0}", rule.name)}
+        </h2>
         <button
           type="button"
           className="icon-button"
-          aria-label="关闭配置指南"
+          aria-label={t("Close configuration guide")}
           autoFocus
           disabled={busy}
           onClick={onClose}
@@ -154,28 +161,32 @@ export function PolicyGuide({
         </button>
       </div>
       <p id="policy-guide-description" className="muted">
-        在 Tailscale 控制台完成以下配置，再回到 ztail 重试发布。
+        {t(
+          "Complete these steps in the Tailscale console, then return to ztail and retry publishing.",
+        )}
       </p>
       {!config ? (
         <div className="loading-inline">
           <LoaderCircle className="spin" size={16} />
-          正在读取配置…
+          {t("Loading configuration…")}
         </div>
       ) : (
         <>
           <section className="guide-step">
             <div className="guide-step-heading">
-              <h3>1. 定义 Tailscale Service</h3>
+              <h3>{t("1. Define a Tailscale Service")}</h3>
               <a
                 href="https://console.tailscale.com/admin/services"
                 target="_blank"
                 rel="noreferrer"
               >
-                打开 Services
+                {t("Open Services")}
                 <ArrowUpRight size={14} />
               </a>
             </div>
-            <p>选择 Define a Service，按下面的值填写表单并保存。</p>
+            <p>
+              {t("Choose Define a Service, enter the values below and save.")}
+            </p>
             <div className="guide-fields">
               <label htmlFor="guide-service-name">Service name</label>
               <div className="guide-field">
@@ -201,72 +212,85 @@ export function PolicyGuide({
               </div>
             </div>
             <p className="help">
-              Ports 左侧已有 tcp: 时，只填 {port}。这里是 tailnet{" "}
-              {rule.protocol === "tcp" ? "TCP" : "HTTPS"}
-              入口；后端端口 {rule.port} 继续由 ztail 转发。
+              {t(
+                "If Ports already shows tcp: on the left, enter only {0}. This is the tailnet {1} endpoint; ztail forwards to backend port {2}.",
+                port,
+                rule.protocol === "tcp" ? "TCP" : "HTTPS",
+                rule.port,
+              )}
             </p>
             <p className="help">
-              给这条 Service 选择 <code>{config.serviceTag}</code>；ztail
-              节点使用 <code>{config.nodeTag}</code>。
+              {t(
+                "Assign this Service the tag {0}; the ztail node uses {1}.",
+                config.serviceTag,
+                config.nodeTag,
+              )}
             </p>
             <div className="guide-domain mono">
-              {accessPreview(rule, tail?.dnsSuffix)}
+              {accessPreview(rule, tail?.dnsSuffix, t("<name>"))}
             </div>
           </section>
           <section className="guide-step">
             <div className="guide-step-heading">
-              <h3>2. 合并审批和访问规则</h3>
+              <h3>{t("2. Merge approval and access rules")}</h3>
               <a
                 href="https://console.tailscale.com/admin/acls"
                 target="_blank"
                 rel="noreferrer"
               >
-                打开 Access controls
+                {t("Open Access controls")}
                 <ArrowUpRight size={14} />
               </a>
             </div>
             <p>
-              将以下片段合并到已有策略，保留其它规则。它允许带{" "}
-              <code>{config.nodeTag}</code>{" "}
-              的节点承载这组服务，并允许所列来源访问{" "}
-              {rule.protocol === "tcp" ? "TCP" : "HTTPS"} {port}。
+              {t(
+                "Merge the fragment below into your existing policy, keeping other rules. It allows nodes tagged {0} to host these services, and the listed sources to access {1} {2}.",
+                config.nodeTag,
+                rule.protocol === "tcp" ? "TCP" : "HTTPS",
+                port,
+              )}
             </p>
             <p className="help">
-              已有 tagOwners、autoApprovers 或 grants
-              时，合并其中的条目。成员选择器 member / members
-              的写法应与现有策略一致，不能混用。
+              {t(
+                "If tagOwners, autoApprovers or grants already exist, merge their entries. Use the same member / members selector spelling as your existing policy; do not mix them.",
+              )}
             </p>
             <div className="guide-policy">
-              <CopyValue value={policy} label="策略片段" />
-              <pre aria-label="Tailscale 策略片段" tabIndex={0}>
+              <CopyValue value={policy} label={t("Policy fragment")} />
+              <pre aria-label={t("Tailscale policy fragment")} tabIndex={0}>
                 {policy}
               </pre>
             </div>
           </section>
           <section className="guide-step">
-            <h3>3. 重试发布并检查审批</h3>
+            <h3>{t("3. Retry publishing and check approval")}</h3>
             <p>
-              保存后回到 ztail 重试。如果 Service hosts 显示待审批，请批准 ztail
-              节点。启用上述自动审批规则后，符合条件的广告会自动批准。
+              {t(
+                "Save, then return to ztail and retry. If Service hosts shows pending approval, approve the ztail node. Eligible advertisements are approved automatically when the rules above are enabled.",
+              )}
             </p>
             <p className="help">
-              确认 tailnet 已开启 MagicDNS
-              {rule.protocol === "tcp"
-                ? "。TCP 无需 HTTPS 证书。ztail"
-                : " 和 HTTPS。ztail"}
-              提供配置指南，策略由你在 Tailscale 控制台保存。
+              {t(
+                "Ensure MagicDNS is enabled. {0} You save the policy in the Tailscale console; ztail provides this guide.",
+                {
+                  key:
+                    rule.protocol === "tcp"
+                      ? "TCP does not need an HTTPS certificate."
+                      : "Web services also require HTTPS.",
+                },
+              )}
             </p>
           </section>
         </>
       )}
       {error && (
         <div className="notice error" role="alert">
-          {error}
+          {message(error)}
         </div>
       )}
       <div className="guide-actions">
         <button type="button" disabled={busy} onClick={onClose}>
-          关闭
+          {t("Close")}
         </button>
         {rule.enabled && (
           <button
@@ -280,7 +304,7 @@ export function PolicyGuide({
                 await onRetry();
                 onClose();
               } catch (e) {
-                setError((e as Error).message);
+                setError(asMessage(e));
               } finally {
                 setBusy(false);
               }
@@ -291,7 +315,7 @@ export function PolicyGuide({
             ) : (
               <RefreshCw size={16} />
             )}
-            重试发布
+            {t("Retry publishing")}
           </button>
         )}
       </div>
@@ -300,6 +324,7 @@ export function PolicyGuide({
 }
 
 export function PublishedAccessHelp({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
   const dialog = useModalDialog();
   return (
     <dialog
@@ -314,11 +339,11 @@ export function PublishedAccessHelp({ onClose }: { onClose: () => void }) {
       }}
     >
       <div className="policy-guide-heading">
-        <h2 id="access-help-title">无法访问已发布的服务？</h2>
+        <h2 id="access-help-title">{t("Can't access a published service?")}</h2>
         <button
           type="button"
           className="icon-button"
-          aria-label="关闭访问帮助"
+          aria-label={t("Close access help")}
           autoFocus
           onClick={onClose}
         >
@@ -326,39 +351,39 @@ export function PublishedAccessHelp({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <p id="access-help-description" className="muted">
-        已发布表示 ztail
-        已声明承载服务。访问前请确认主机审批与发布端口的访问权限。
+        {t(
+          "Published means ztail advertises that it hosts the service. Before connecting, check host approval and access permissions for the published port.",
+        )}
       </p>
       <section className="guide-step">
         <div className="guide-step-heading">
-          <h3>1. 确认服务主机已获审批</h3>
+          <h3>{t("1. Check service host approval")}</h3>
           <a
             href="https://console.tailscale.com/admin/services"
             target="_blank"
             rel="noreferrer"
           >
-            打开 Services <ArrowUpRight size={14} />
+            {t("Open Services")}
+            <ArrowUpRight size={14} />
           </a>
         </div>
         <p>
-          如果已合并 ztail
-          提供的自动审批策略，且节点与服务的标签匹配，服务主机会自动获批。
-          否则，请在 Tailscale 控制台打开对应的 Service，在 Service hosts
-          中手动批准承载它的 ztail 节点。
+          {t(
+            "If you merged ztail's automatic approval policy and the node and Service tags match, the service host is approved automatically. Otherwise, open the corresponding Service in the Tailscale console and approve the hosting ztail node under Service hosts.",
+          )}
         </p>
       </section>
       <section className="guide-step">
-        <h3>2. 等待首次 HTTPS 证书签发</h3>
+        <h3>{t("2. Wait for the first HTTPS certificate")}</h3>
         <p>
-          Web 服务需要由 Tailscale 为其 HTTPS
-          域名签发证书，首次签发可能需要数分钟。
-          如果刚刚发布，请稍候再打开访问地址。 TCP 服务不需要 HTTPS
-          证书，请使用对应客户端连接显示的主机名和发布端口。
+          {t(
+            "Web services need Tailscale to issue a certificate for their HTTPS hostname. Initial issuance may take several minutes. If you just published, wait before opening the address. TCP services do not need an HTTPS certificate; connect to the displayed hostname and published port with the appropriate client.",
+          )}
         </p>
       </section>
       <div className="guide-actions">
         <button type="button" onClick={onClose}>
-          关闭
+          {t("Close")}
         </button>
       </div>
     </dialog>

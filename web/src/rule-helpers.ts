@@ -6,8 +6,12 @@ export const publicPort = (rule: Rule) =>
 export const connectionAddress = (url: string) => url.replace(/^tcp:\/\//, "");
 export const isWebAddress = (url: string) => /^https?:\/\//.test(url);
 
-export function accessPreview(rule: Rule, suffix?: string) {
-  const host = `${rule.name || "<名称>"}.${suffix || "<tailnet>.ts.net"}`;
+export function accessPreview(
+  rule: Rule,
+  suffix?: string,
+  placeholder = "<name>",
+) {
+  const host = `${rule.name || placeholder}.${suffix || "<tailnet>.ts.net"}`;
   return rule.protocol === "tcp"
     ? `${host}:${publicPort(rule)}`
     : `https://${host}`;

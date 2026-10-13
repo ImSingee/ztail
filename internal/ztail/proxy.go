@@ -27,7 +27,7 @@ func NewProxy(target *url.URL) *httputil.ReverseProxy {
 	p.Transport = &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 90 * time.Second, MaxIdleConnsPerHost: 16}
 	p.FlushInterval = -1
 	p.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, "后端暂时不可达，请检查服务地址、端口和 TLS 证书", http.StatusBadGateway)
+		http.Error(w, "Backend temporarily unreachable. Check the service address, port and TLS certificate", http.StatusBadGateway)
 	}
 	return p
 }

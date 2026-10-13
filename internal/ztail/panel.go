@@ -69,10 +69,10 @@ func (p *nodePanel) publish(url, message string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if message != "" && message != p.err {
-		log.Printf("[tailscale] 管理面板 HTTPS 监听失败: %s", message)
+		log.Printf("[tailscale] Console HTTPS listener failed: %s", message)
 	}
 	if url != "" && url != p.url {
-		log.Printf("[tailscale] 管理面板: %s", url)
+		log.Printf("[tailscale] Console: %s", url)
 	}
 	p.url, p.err = url, message
 }

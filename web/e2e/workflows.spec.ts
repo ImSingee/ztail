@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { buildID } from "./build-id";
 import { test, expect, Page, APIRequestContext } from "@playwright/test";
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 const assets = process.env.ZTAIL_EVIDENCE_DIR || "test-results/evidence";
 mkdirSync(assets, { recursive: true });
 async function capture(page: Page, name: string) {
@@ -40,14 +40,7 @@ async function manual(page: Page, name = "grafana") {
   await page.getByLabel("后端端口").fill("18082");
 }
 test.beforeEach(async ({ request }) => {
-  const hash = createHash("sha256")
-    .update(readFileSync("src/main.tsx"))
-    .update(readFileSync("src/catalog.tsx"))
-    .update(readFileSync("src/policy-guide.tsx"))
-    .update(readFileSync("../internal/ztail/manager.go"))
-    .update(readFileSync("../internal/ztail/tailnet.go"))
-    .digest("hex")
-    .slice(0, 12);
+  const hash = buildID();
   const health = await (await request.get("/healthz")).json();
   expect(health.version).toBe("e2e-" + hash);
   writeFileSync(

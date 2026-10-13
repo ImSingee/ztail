@@ -31,10 +31,12 @@ func (f *fakeCatalog) Refresh(context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.failure {
-		f.cat.Error = "Zeabur API 返回 HTTP 401"
-		return errors.New(f.cat.Error)
+		f.cat.Error = "Zeabur API returned HTTP 401. Check API Key and account permissions"
+		f.cat.ErrorInfo = messageInfo("Zeabur API returned HTTP {0}. Check API Key and account permissions", 401)
+		return &translatedError{info: f.cat.ErrorInfo}
 	}
 	f.cat.Error = ""
+	f.cat.ErrorInfo = nil
 	return nil
 }
 func (f *fakeCatalog) Contains(r Rule) bool {
@@ -87,7 +89,7 @@ func (f *fakeTail) Connect(_ context.Context, method, key string) error {
 	defer f.mu.Unlock()
 	f.connects = append(f.connects, map[string]any{"method": method, "authKeyPresent": key != ""})
 	if method == "authkey" && key == "" {
-		return errors.New("请输入 Auth Key")
+		return messageError("Enter an Auth Key")
 	}
 	f.state.Error = ""
 	f.state.Connecting = true
@@ -192,7 +194,7 @@ func (f *fakeRegistry) Ensure(_ context.Context, tailnet string, rule Rule) erro
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, map[string]any{"tailnet": tailnet, "name": name, "create": create, "ports": []string{rule.ServicePort()}})
 	if f.failure {
-		return errors.New("TAILSCALE_API_KEY 无效、已过期或没有当前 tailnet 的 Services 权限")
+		return messageError("TAILSCALE_API_KEY is invalid, expired or lacks Services permissions for this tailnet")
 	}
 	f.tail.mu.Lock()
 	defer f.tail.mu.Unlock()
@@ -200,7 +202,7 @@ func (f *fakeRegistry) Ensure(_ context.Context, tailnet string, rule Rule) erro
 		return compatiblePorts(def.Ports, rule.ServicePort())
 	}
 	if !create {
-		return errors.New("Service 尚未定义")
+		return errors.New("Service not defined. Create it in the Tailscale console or enable API creation")
 	}
 	f.tail.defs["svc:"+name] = ServiceDefinition{Name: "svc:" + name, Ports: []string{rule.ServicePort()}, Tags: []string{"tag:ztail-service"}}
 	return nil
@@ -384,7 +386,7 @@ func TestTailscaleAPINeverOverwrites(t *testing.T) {
 		if len(events) != before+1 || !strings.HasPrefix(events[len(events)-1], "GET ") {
 			t.Fatal("existing overwritten")
 		}
-		if m == "node-name" && !strings.Contains(err.Error(), "已有节点名称冲突") {
+		if m == "node-name" && !strings.Contains(err.Error(), "conflicts with an existing tailnet node") {
 			t.Fatal("collision explanation lost", err)
 		}
 	}

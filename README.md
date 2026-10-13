@@ -1,20 +1,26 @@
 # ztail
 
-通过 Web 面板，手动将 Zeabur Dedicated Server / k3s 中的 Web 或 TCP 服务发布到 Tailscale 网络。Web 服务获得独立的 HTTPS 地址，例如 `https://grafana.<tailnet>.ts.net`；TCP 服务使用独立的主机名和端口，例如 `redis.<tailnet>.ts.net:6379`。
+**English** | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
 
-支持 HTTP/HTTPS 后端、WebSocket、SSE、上传，以及数据库等服务的原始 TCP 转发。你可以选择发布哪些服务、使用什么名称；服务目录刷新不会自动发布。访问设备需要加入同一 tailnet 并获得访问权限。
+Manually publish Web or TCP services from a Zeabur Dedicated Server / k3s cluster to your Tailscale network through a web console. Each Web service gets its own HTTPS address, such as `https://grafana.<tailnet>.ts.net`. TCP services use their own hostname and port, such as `redis.<tailnet>.ts.net:6379`.
 
-## 部署
+Supports HTTP/HTTPS backends, WebSocket, SSE, uploads, and raw TCP forwarding for services such as databases. You choose which services to publish and their names; refreshing the catalog does not publish anything automatically. Client devices must join the same tailnet and have access permission.
+
+## Interface languages
+
+The console supports English, Simplified Chinese and Traditional Chinese. On first visit, Chinese system languages select the corresponding Chinese variant: Taiwan, Hong Kong, Macao or `zh-Hant` use Traditional Chinese; other Chinese locales or `zh-Hans` use Simplified Chinese. Other system languages default to English. Switch languages on the sign-in page or in the navigation bar. Your choice is saved in browser `localStorage` (`ztail.locale`) and restored on reload. Switching languages preserves your session and unsaved forms.
+
+## Deployment
 
 ### Zeabur
 
-导入 [zeabur_template.yaml](zeabur_template.yaml)，部署到服务所在的 Dedicated Server，填写 Zeabur API Key、Server ID 和管理面板域名。
+Import [zeabur_template.yaml](zeabur_template.yaml), deploy to the Dedicated Server hosting your services, and enter the Zeabur API Key, Server ID and console domain.
 
-部署后，通过管理面板域名登录。`ADMIN_PASSWORD` 由模板随机生成，可在服务的使用说明中查看。
+After deployment, sign in through the console domain. The template generates `ADMIN_PASSWORD` randomly; find it in the service's usage instructions.
 
 ### Docker
 
-先在当前 shell 中设置 `ADMIN_PASSWORD`、`ZEABUR_API_KEY` 和 `ZEABUR_SERVER_ID`，再启动：
+Set `ADMIN_PASSWORD`, `ZEABUR_API_KEY` and `ZEABUR_SERVER_ID` in your current shell, then run:
 
 ```sh
 docker run -d --name ztail --restart unless-stopped \
@@ -24,62 +30,62 @@ docker run -d --name ztail --restart unless-stopped \
   ghcr.io/imsingee/ztail:latest
 ```
 
-访问 `http://localhost:8080`。容器必须能解析并访问目标集群的 Service 地址；运行在集群外时，可在面板中手填容器能访问的后端地址。
+Open `http://localhost:8080`. The container must resolve and reach the target cluster's Service addresses. When running outside the cluster, enter a backend address reachable from the container in the console.
 
 ### Kubernetes
 
-参考 [deploy/kubernetes.yaml](deploy/kubernetes.yaml)。先创建 `ztail` namespace 和 `ztail-config` Secret，Secret 中包含下表的必填变量；再应用清单，通过 HTTPS Ingress 访问管理面板。可选的 `TAILSCALE_API_KEY` 也可加入该 Secret；自定义节点 tag 时修改 Deployment 的 `TAILSCALE_TAG`。
+See [deploy/kubernetes.yaml](deploy/kubernetes.yaml). Create the `ztail` namespace and a `ztail-config` Secret containing the required variables below, then apply the manifest and access the console through an HTTPS Ingress. You can add the optional `TAILSCALE_API_KEY` to the same Secret. To customize the node tag, change `TAILSCALE_TAG` in the Deployment.
 
-**保留 `/data` 数据卷并使用单副本。** 它保存发布配置和节点身份，重启后可恢复连接。不同部署使用独立数据卷；自行挂载的目录需允许容器用户 `10001:10001` 写入。
+**Keep the `/data` volume and use a single replica.** It stores publishing configuration and node identity so connections can be restored after restart. Use a separate volume for each deployment. Mounted directories must be writable by container user `10001:10001`.
 
-## 环境变量
+## Environment variables
 
-| 环境变量            | 要求 / 默认值   | 说明                                                        |
-| ------------------- | --------------- | ----------------------------------------------------------- |
-| `ADMIN_PASSWORD`    | 必填            | 管理面板密码                                                |
-| `ZEABUR_API_KEY`    | 必填            | Zeabur API Key                                              |
-| `ZEABUR_SERVER_ID`  | 必填            | 服务所在的 Dedicated Server ID，以 `server-` 开头           |
-| `TAILSCALE_API_KEY` | 可选            | 用于创建和检查 Tailscale Service；不是节点授权用的 Auth Key |
-| `TAILSCALE_TAG`     | `ztail`         | 节点 tag 名称，只填名称，不带 `tag:`                        |
-| `CLUSTER_DOMAIN`    | `cluster.local` | 集群 DNS 后缀                                               |
-| `PORT`              | `8080`          | 管理面板端口                                                |
-| `DATA_DIR`          | `/data`         | 持久化数据目录                                              |
+| Variable            | Requirement / Default | Description                                                                             |
+| ------------------- | --------------------- | --------------------------------------------------------------------------------------- |
+| `ADMIN_PASSWORD`    | Required              | Console password                                                                        |
+| `ZEABUR_API_KEY`    | Required              | Zeabur API Key                                                                          |
+| `ZEABUR_SERVER_ID`  | Required              | Dedicated Server ID hosting the services, starting with `server-`                       |
+| `TAILSCALE_API_KEY` | Optional              | Creates and checks Tailscale Services; this is not the Auth Key used to enroll the node |
+| `TAILSCALE_TAG`     | `ztail`               | Node tag name, without the `tag:` prefix                                                |
+| `CLUSTER_DOMAIN`    | `cluster.local`       | Cluster DNS suffix                                                                      |
+| `PORT`              | `8080`                | Console port                                                                            |
+| `DATA_DIR`          | `/data`               | Persistent data directory                                                               |
 
-密码和 API Key 通过部署环境变量配置，不能在面板中修改。
+Configure passwords and API Keys through deployment environment variables. They cannot be changed in the console.
 
-## 首次设置
+## Initial setup
 
-1. 在 Tailscale 控制台开启 MagicDNS 和 HTTPS。
-2. 登录 ztail，打开「连接设置」，按页面指南配置节点 tag、Service 主机自动审批和访问授权。**将提供的条目合并到现有策略，保留其他规则，不要覆盖完整策略。**
-3. 保存策略后，再选择「交互式授权」或「使用 Auth Key 加入」，等待节点显示「已连接」。Auth Key 是 `tskey-auth-` 开头的节点授权密钥，不能用 API Key 代替。
+1. Enable MagicDNS and HTTPS in the Tailscale console.
+2. Sign in to ztail and open **Connection settings**. Follow the guide to configure the node tag, automatic Service host approval and access permissions. **Merge the provided entries into your existing policy, keeping other rules. Do not replace the entire policy.**
+3. Save the policy, then choose **Interactive authorization** or **Join with an Auth Key** and wait for **Connected**. An Auth Key is a node enrollment key starting with `tskey-auth-`; an API Key cannot replace it.
 
-连接后，也可通过「连接设置」中显示的 tailnet 管理面板地址访问 ztail，仍需输入管理员密码。
+Once connected, you can also access ztail through the tailnet console address shown in **Connection settings**. The admin password is still required.
 
-### Service 定义
+### Service definitions
 
-- **配置了 `TAILSCALE_API_KEY`：** 发布时可勾选通过 API 创建尚未定义的 Service。API Key 需具有对应 tailnet 的 Service 管理权限。
-- **未配置 `TAILSCALE_API_KEY`：** 先在 Tailscale 控制台定义同名 Service。例如发布名称为 `grafana`，控制台的 Service name 填 `grafana`，端口设置为 TCP 443，Service tag 选择 `tag:ztail-service`。
+- **With `TAILSCALE_API_KEY`:** When publishing, enable API creation of an undefined Service. The API Key needs Service management permissions for the corresponding tailnet.
+- **Without `TAILSCALE_API_KEY`:** First define a Service with the same name in the Tailscale console. For example, to publish `grafana`, enter `grafana` as the Service name, set the port to TCP 443 and select Service tag `tag:ztail-service`.
 
-节点默认使用 `tag:ztail`，Service 使用 `tag:ztail-service`。自定义节点 tag 后，按面板显示的策略片段配置。TCP 服务的 Service 端口填写所选发布端口，例如 Redis 使用 `tcp:6379`；访问策略也需允许该端口。每条规则仅发布一个端口；已有 Service 定义不会被覆盖，修改发布端口时需先在控制台调整定义，或使用新的服务名称。
+The node uses `tag:ztail` by default; Services use `tag:ztail-service`. If you customize the node tag, follow the policy fragment shown in the console. For a TCP Service, define the chosen published port, such as `tcp:6379` for Redis, and allow it in the access policy. Each rule publishes one port. Existing Service definitions are never overwritten: when changing the published port, first update its definition in the Tailscale console or use a new service name.
 
-## 发布服务
+## Publishing services
 
-1. 在「Zeabur 服务」中找到项目和环境，点击目标 HTTP/HTTPS 或 TCP 端口的「发布」。也可在「已发布」中点击「发布」，手填后端地址。
-2. 确认访问名称与后端端口，发布到 tailnet。需要更多配置时可进入完整编辑页，测试后端或保存草稿。
-3. 在「已发布」中查看访问地址、发布状态和后端连接结果，也可编辑、停用或删除服务。
+1. Find the project and environment under **Zeabur services**, then click **Publish** for the desired HTTP/HTTPS or TCP port. You can also click **Publish** under **Published** and enter a backend address manually.
+2. Confirm the access name and backend port, then publish to your tailnet. Open the full editor to test the backend, adjust more settings or save a draft.
+3. Under **Published**, inspect the address, publishing status and backend connectivity. You can also edit, disable or delete services.
 
-TCP 发布端口默认与后端端口相同，可单独设置。使用数据库等对应客户端连接显示的 `主机名:发布端口`，例如 `redis-cli -h redis.<tailnet>.ts.net -p 6379`，而不是用浏览器打开。TCP 数据原样转发（包括后端自己的 TLS 协商），无需 Tailscale HTTPS 证书。TCP 后端测试只验证端口能够建立连接，不验证登录或应用协议。修改后端地址仅影响新 TCP 连接；修改协议或发布端口、停用或删除服务会关闭现有 TCP 连接。
+The TCP published port defaults to the backend port and can be set independently. Connect to the displayed `hostname:published-port` using the appropriate client, such as `redis-cli -h redis.<tailnet>.ts.net -p 6379`. TCP data is forwarded unchanged, including the backend's own TLS handshake; no Tailscale HTTPS certificate is needed. A TCP backend test only checks that a connection can be established, not authentication or the application protocol. Changing the backend address affects only new TCP connections. Changing the protocol or published port, disabling or deleting a service closes its existing TCP connections.
 
-停用或删除服务只撤回当前节点的发布，保留 Tailscale 控制台中的 Service 定义。
+Disabling or deleting a service withdraws only this node's advertisement. The Service definition in the Tailscale console remains.
 
-## 常见问题
+## Troubleshooting
 
-- **节点授权提示 tag 无效或不允许：** 先按「连接设置」的指南配置 `tagOwners`，确认授权账号有权使用该节点 tag，再重新授权。
-- **Service 未定义或对节点不可见：** 检查 Service 名称、发布端口（Web 为 `tcp:443`）、`tag:ztail-service` 和访问策略。点击错误中的「配置访问策略」可查看当前服务的配置指南。
-- **名称与已有节点冲突：** 改用其他发布名称。例如节点已经叫 `ztail`，Service 可命名为 `ztail-web`。
-- **已发布但无法访问：** 「已发布」不代表主机已获审批。确认 Services 控制台中的 Service hosts 已批准 ztail 节点，以及客户端具有访问权限。自动审批策略匹配时会自动批准；否则需手动审批。首次 HTTPS 证书签发可能需要数分钟，刚发布请稍候重试；页面上的「无法访问已发布的服务？」提供相关说明。
-- **后端不可达：** 检查所选环境、端口、服务运行状态及集群 DNS/网络。HTTPS 后端需提供有效证书；限制 Host 的应用需允许发布后的 tailnet 域名。
-- **UDP 服务：** 暂不支持 UDP 发布，目录中的 UDP 端口仅供参考。
+- **Node authorization reports an invalid or disallowed tag:** Configure `tagOwners` using the **Connection settings** guide, ensure the authorizing account can use the node tag, then authorize again.
+- **Service undefined or invisible to the node:** Check its name, published port (`tcp:443` for Web), `tag:ztail-service` and access policy. Click **Configure access policy** in the error to open the guide for this service.
+- **Name conflicts with an existing node:** Choose another publishing name. If a node is already named `ztail`, name the Service `ztail-web`, for example.
+- **Published but inaccessible:** **Published** does not mean the host is approved. Check that Service hosts in the Services console has approved the ztail node and the client has access permission. Matching automatic approval policies approve hosts automatically; otherwise, approve manually. Initial HTTPS certificate issuance may take several minutes. Wait and retry if you just published. **Can't access a published service?** explains these checks.
+- **Backend unreachable:** Check the selected environment, port, service status and cluster DNS/network. HTTPS backends must present a valid certificate. Applications that restrict the Host header must allow the published tailnet hostname.
+- **UDP services:** UDP publishing is currently unsupported. UDP ports in the catalog are shown for reference only.
 
 ## License
 

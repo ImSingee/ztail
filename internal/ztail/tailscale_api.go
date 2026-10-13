@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -34,12 +32,12 @@ func (a *TailscaleAPI) request(ctx context.Context, method, path string, body []
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, 0, errors.New("Tailscale API 无法连接")
+		return nil, 0, messageError("Tailscale API unreachable")
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, 0, errors.New("无法读取 Tailscale API 响应")
+		return nil, 0, messageError("Could not read the Tailscale API response")
 	}
 	return data, resp.StatusCode, nil
 }
@@ -51,7 +49,7 @@ func (a *TailscaleAPI) Ensure(ctx context.Context, tailnet string, rule Rule) er
 	}
 	if status == 404 {
 		if !rule.CreateService {
-			return errors.New("Service 尚未定义，请到 Tailscale 控制台创建或启用 API 创建")
+			return messageError("Service not defined. Create it in the Tailscale console or enable API creation")
 		}
 		body, _ = json.Marshal(ServiceDefinition{Name: "svc:" + rule.Name, Ports: []string{rule.ServicePort()}, Tags: []string{"tag:ztail-service"}})
 		body, status, err = a.request(ctx, "PUT", path, body)
@@ -68,7 +66,7 @@ func (a *TailscaleAPI) Ensure(ctx context.Context, tailnet string, rule Rule) er
 	}
 	var def ServiceDefinition
 	if json.Unmarshal(body, &def) != nil {
-		return errors.New("Tailscale API 返回无效 Service 定义")
+		return messageError("Tailscale API returned an invalid Service definition")
 	}
 	return compatiblePorts(def.Ports, rule.ServicePort())
 }
@@ -79,12 +77,12 @@ func compatiblePorts(ports []string, expected string) error {
 	if len(ports) == 1 && (ports[0] == expected || ports[0] == "do-not-validate") {
 		return nil
 	}
-	return fmt.Errorf("Service 必须仅定义 %s（或 do-not-validate）；ztail 不覆盖已有定义，请修改控制台中的端口或使用新名称。配置访问策略", expected)
+	return messageError("Service must define only {0} (or do-not-validate). ztail does not overwrite existing definitions. Change the ports in the console or use a new name.", expected)
 }
 func (a *TailscaleAPI) apiError(status int, body []byte) error {
-	message := fmt.Sprintf("Tailscale API 返回 HTTP %d", status)
+	info := messageInfo("Tailscale API returned HTTP {0}", status)
 	if status == 401 || status == 403 {
-		message = "TAILSCALE_API_KEY 无效、已过期或没有当前 tailnet 的 Services 权限"
+		info = messageInfo("TAILSCALE_API_KEY is invalid, expired or lacks Services permissions for this tailnet")
 	}
 	// Only expose the API's structured explanation, never an HTML/proxy body.
 	var detail struct {
@@ -97,15 +95,15 @@ func (a *TailscaleAPI) apiError(status int, body []byte) error {
 			reason = strings.TrimSpace(detail.Error)
 		}
 		if status == http.StatusBadRequest && reason == "name exists but is not a service" {
-			return errors.New("Service 名称与 tailnet 中已有节点名称冲突，请修改 Service 名称后重试")
+			return messageError("Service name conflicts with an existing tailnet node. Choose another Service name and retry")
 		}
 		reason = tailscaleSecret.ReplaceAllString(a.redact(reason), "[redacted]")
 		if chars := []rune(reason); len(chars) > 512 {
 			reason = string(chars[:512]) + "…"
 		}
 		if reason != "" {
-			message += ": " + reason
+			info = messageInfo("{0}: {1}", info, reason)
 		}
 	}
-	return errors.New(message)
+	return &translatedError{info: info}
 }

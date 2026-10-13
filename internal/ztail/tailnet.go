@@ -3,7 +3,7 @@ package ztail
 import (
 	"context"
 	"crypto/tls"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -20,23 +20,24 @@ import (
 )
 
 type TailStatus struct {
-	State         string   `json:"state"`
-	AuthURL       string   `json:"authUrl"`
-	Tailnet       string   `json:"tailnet"`
-	DNSSuffix     string   `json:"dnsSuffix"`
-	Hostname      string   `json:"hostname"`
-	DNSName       string   `json:"dnsName"`
-	PanelURL      string   `json:"panelUrl"`
-	PanelError    string   `json:"panelError"`
-	NodeID        string   `json:"nodeId"`
-	Tags          []string `json:"tags"`
-	IPs           []string `json:"ips"`
-	MagicDNS      bool     `json:"magicDns"`
-	HTTPS         bool     `json:"https"`
-	Error         string   `json:"error"`
-	Connecting    bool     `json:"connecting"`
-	ConnectMethod string   `json:"connectMethod"`
-	Health        []string `json:"health"`
+	ErrorInfo     *MessageInfo `json:"errorInfo,omitempty"`
+	State         string       `json:"state"`
+	AuthURL       string       `json:"authUrl"`
+	Tailnet       string       `json:"tailnet"`
+	DNSSuffix     string       `json:"dnsSuffix"`
+	Hostname      string       `json:"hostname"`
+	DNSName       string       `json:"dnsName"`
+	PanelURL      string       `json:"panelUrl"`
+	PanelError    string       `json:"panelError"`
+	NodeID        string       `json:"nodeId"`
+	Tags          []string     `json:"tags"`
+	IPs           []string     `json:"ips"`
+	MagicDNS      bool         `json:"magicDns"`
+	HTTPS         bool         `json:"https"`
+	Error         string       `json:"error"`
+	Connecting    bool         `json:"connecting"`
+	ConnectMethod string       `json:"connectMethod"`
+	Health        []string     `json:"health"`
 }
 type ServiceDefinition struct {
 	Name  string   `json:"name"`
@@ -116,7 +117,7 @@ func (t *EmbeddedTailnet) startServerLocked(s *tsnet.Server) error {
 			if e != nil {
 				if watchCtx.Err() == nil {
 					t.mu.Lock()
-					t.lastError = "Tailscale 状态监听中断，请重启 ztail"
+					t.lastError = "Tailscale status watch interrupted. Restart ztail"
 					t.connectStarted = time.Time{}
 					t.logf("%s", t.lastError)
 					t.mu.Unlock()
@@ -127,7 +128,7 @@ func (t *EmbeddedTailnet) startServerLocked(s *tsnet.Server) error {
 			if notification.ErrMessage != nil && *notification.ErrMessage != "" {
 				message := t.redact(*notification.ErrMessage)
 				if t.lastError != message {
-					t.logf("接入失败: %s", message)
+					t.logf("Enrollment failed: %s", message)
 				}
 				t.lastError = message
 				t.connectStarted = time.Time{}
@@ -135,7 +136,7 @@ func (t *EmbeddedTailnet) startServerLocked(s *tsnet.Server) error {
 			if notification.State != nil {
 				state := notification.State.String()
 				if state != t.lastState {
-					t.logf("节点状态: %s", state)
+					t.logf("Node status: %s", state)
 					t.lastState = state
 				}
 				if *notification.State == ipn.Running || *notification.State == ipn.NeedsMachineAuth {
@@ -156,16 +157,16 @@ func (t *EmbeddedTailnet) Status(ctx context.Context) TailStatus {
 			return TailStatus{State: "NeedsLogin", Tags: []string{}, IPs: []string{}}
 		}
 		if err := t.startLocked(); err != nil {
-			return TailStatus{State: "Error", Error: "Tailscale 无法启动"}
+			return TailStatus{State: "Error", Error: "Tailscale could not start"}
 		}
 	}
 	lc, err := t.server.LocalClient()
 	if err != nil {
-		return TailStatus{State: "Error", Error: "Tailscale 本地接口不可用"}
+		return TailStatus{State: "Error", Error: "Tailscale local API unavailable"}
 	}
 	st, err := lc.Status(ctx)
 	if err != nil {
-		return TailStatus{State: "Error", Error: "无法读取 Tailscale 状态"}
+		return TailStatus{State: "Error", Error: "Could not read Tailscale status"}
 	}
 	out := TailStatus{State: st.BackendState, AuthURL: st.AuthURL, Tags: []string{}, IPs: []string{}}
 	if st.Self != nil {
@@ -194,7 +195,7 @@ func (t *EmbeddedTailnet) Status(ctx context.Context) TailStatus {
 	}
 	if !t.connectStarted.IsZero() && time.Since(t.connectStarted) >= 90*time.Second {
 		t.connectStarted = time.Time{}
-		t.lastError = "Tailscale 接入尚未完成（等待超过 90 秒），请检查网络、Auth Key 和 tag 权限后重试；后台会继续尝试连接"
+		t.lastError = "Tailscale enrollment has taken over 90 seconds. Check the network, Auth Key and tag permissions, then retry. Connection attempts will continue in the background"
 		t.logf("%s", t.lastError)
 	}
 	out.Connecting = !t.connectStarted.IsZero()
@@ -206,7 +207,7 @@ func (t *EmbeddedTailnet) Status(ctx context.Context) TailStatus {
 	health := strings.Join(out.Health, "; ")
 	if health != t.lastHealth {
 		if health != "" {
-			t.logf("健康警告: %s", health)
+			t.logf("Health warning: %s", health)
 		}
 		t.lastHealth = health
 	}
@@ -217,35 +218,35 @@ func (t *EmbeddedTailnet) Connect(ctx context.Context, method, key string) error
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if method != "interactive" && method != "authkey" {
-		return errors.New("请选择 interactive 或 Auth Key")
+		return messageError("Choose interactive authorization or an Auth Key")
 	}
 	if method == "authkey" && key == "" {
-		return errors.New("请输入 Auth Key")
+		return messageError("Enter an Auth Key")
 	}
 	if method == "authkey" && !strings.HasPrefix(key, "tskey-auth-") {
-		return errors.New("请输入 Tailscale Auth Key（tskey-auth- 开头），不是 API Key 或 OAuth 凭据")
+		return messageError("Enter a Tailscale Auth Key (starting with tskey-auth-), not an API Key or OAuth credential")
 	}
 	if err := t.startLocked(); err != nil {
-		return errors.New("Tailscale 无法启动")
+		return messageError("Tailscale could not start")
 	}
 	lc, err := t.server.LocalClient()
 	if err != nil {
-		return errors.New("Tailscale 本地接口不可用")
+		return messageError("Tailscale local API unavailable")
 	}
 	st, err := lc.Status(ctx)
 	if err != nil {
-		return errors.New("无法读取 Tailscale 状态")
+		return messageError("Could not read Tailscale status")
 	}
 	if st.BackendState == "Running" {
-		return errors.New("节点已连接；请在 Tailscale 控制台管理节点授权")
+		return messageError("Node already connected. Manage authorization in the Tailscale console")
 	}
 	if st.BackendState == "NeedsMachineAuth" {
-		return errors.New("节点正在等待管理员审批，请到 Tailscale 控制台批准节点")
+		return messageError("Node awaiting admin approval. Approve it in the Tailscale console")
 	}
 	t.lastError = ""
 	prefs, err := lc.GetPrefs(ctx)
 	if err != nil {
-		return errors.New("无法读取 Tailscale 接入配置")
+		return messageError("Could not read Tailscale enrollment configuration")
 	}
 	prefs.WantRunning = true
 	prefs.LoggedOut = false
@@ -253,24 +254,24 @@ func (t *EmbeddedTailnet) Connect(ctx context.Context, method, key string) error
 	prefs.AdvertiseTags = []string{t.cfg.NodeTag()}
 	prefs.CorpDNS = false
 	if err = lc.Start(ctx, ipn.Options{AuthKey: key, UpdatePrefs: prefs}); err != nil {
-		return errors.New("接入失败，请检查 Auth Key 的有效期和 tag 权限")
+		return messageError("Enrollment failed. Check Auth Key expiration and tag permissions")
 	}
 	// Start installs the AuthKey on a new control client, but does not log a
 	// fresh node in. Trigger login for BOTH methods, as tsnet.Start itself does.
 	// With a valid AuthKey the control plane registers the node without a browser.
 	if err = lc.StartLoginInteractive(ctx); err != nil {
-		return errors.New("无法启动 Tailscale 登录，请重试")
+		return messageError("Could not start Tailscale sign-in. Retry")
 	}
 	t.connectStarted = time.Now()
 	t.connectMethod = method
-	t.logf("开始节点接入: method=%s tag=%s", method, t.cfg.NodeTag())
+	t.logf("Starting enrollment: method=%s tag=%s", method, t.cfg.NodeTag())
 	return nil
 }
 func (t *EmbeddedTailnet) Services(ctx context.Context) (map[string]ServiceDefinition, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.server == nil {
-		return nil, errors.New("请先加入 tailnet")
+		return nil, messageError("Join the tailnet first")
 	}
 	lc, err := t.server.LocalClient()
 	if err != nil {
@@ -278,7 +279,7 @@ func (t *EmbeddedTailnet) Services(ctx context.Context) (map[string]ServiceDefin
 	}
 	services, err := lc.GetServices(ctx)
 	if err != nil {
-		return nil, errors.New("无法读取可见 Service，请检查 tailnet 访问策略")
+		return nil, messageError("Could not read visible Services. Check the tailnet access policy")
 	}
 	out := map[string]ServiceDefinition{}
 	for name, s := range services {
@@ -296,10 +297,10 @@ func (t *EmbeddedTailnet) Listen(ctx context.Context, rule Rule) (net.Listener, 
 	}
 	st := t.Status(ctx)
 	if st.State != "Running" {
-		return nil, errors.New("请先完成 Tailscale 授权")
+		return nil, messageError("Complete Tailscale authorization first")
 	}
 	if !slices.Contains(st.Tags, t.cfg.NodeTag()) {
-		return nil, fmt.Errorf("节点需要 %s，请检查 tagOwners 和节点 tag", t.cfg.NodeTag())
+		return nil, messageError("Node requires {0}. Check tagOwners and the node tag", t.cfg.NodeTag())
 	}
 	// Up in ListenService has no context parameter: invoke it only after checking
 	// Running, and serialize it with Connect/Close through the owner mutex.
@@ -316,7 +317,7 @@ func (t *EmbeddedTailnet) ListenPanel(ctx context.Context) (net.Listener, error)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.server == nil {
-		return nil, errors.New("请先完成 Tailscale 授权")
+		return nil, messageError("Complete Tailscale authorization first")
 	}
 	// ListenTLS uses a background context while waiting for Up. Use the same
 	// TLS construction with cancellable Up so shutdown cannot stall on login.
@@ -325,7 +326,7 @@ func (t *EmbeddedTailnet) ListenPanel(ctx context.Context) (net.Listener, error)
 		return nil, err
 	}
 	if st.CurrentTailnet == nil || !st.CurrentTailnet.MagicDNSEnabled || len(st.CertDomains) == 0 {
-		return nil, errors.New("请在 Tailscale 控制台开启 MagicDNS 和 HTTPS")
+		return nil, messageError("Enable MagicDNS and HTTPS in the Tailscale console")
 	}
 	lc, err := t.server.LocalClient()
 	if err != nil {
@@ -358,7 +359,7 @@ func (t *EmbeddedTailnet) Withdraw(ctx context.Context, name string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.server == nil {
-		return errors.New("节点尚未连接，撤回将在连接后重试")
+		return messageError("Node disconnected; withdrawal will retry after connecting")
 	}
 	lc, err := t.server.LocalClient()
 	if err != nil {
@@ -366,7 +367,7 @@ func (t *EmbeddedTailnet) Withdraw(ctx context.Context, name string) error {
 	}
 	prefs, err := lc.GetPrefs(ctx)
 	if err != nil {
-		return errors.New("无法读取节点广告配置")
+		return messageError("Could not read node advertisement configuration")
 	}
 	next := []string{}
 	for _, svc := range prefs.AdvertiseServices {
@@ -375,11 +376,11 @@ func (t *EmbeddedTailnet) Withdraw(ctx context.Context, name string) error {
 		}
 	}
 	if _, err = lc.EditPrefs(ctx, &ipn.MaskedPrefs{AdvertiseServicesSet: true, Prefs: ipn.Prefs{AdvertiseServices: next}}); err != nil {
-		return errors.New("撤回 Service 广告失败，将自动重试")
+		return messageError("Service advertisement withdrawal failed; retrying automatically")
 	}
 	sc, err := lc.GetServeConfig(ctx)
 	if err != nil {
-		return errors.New("无法读取 Service 监听配置")
+		return messageError("Could not read Service listener configuration")
 	}
 	if sc == nil {
 		return nil
@@ -390,7 +391,7 @@ func (t *EmbeddedTailnet) Withdraw(ctx context.Context, name string) error {
 		}
 	}
 	if err = lc.SetServeConfig(ctx, sc); err != nil {
-		return errors.New("清理 Service 监听配置失败，将自动重试")
+		return messageError("Service listener cleanup failed; retrying automatically")
 	}
 	return nil
 }
@@ -415,4 +416,12 @@ func (t *EmbeddedTailnet) Advertisements(ctx context.Context) ([]string, error) 
 		}
 	}
 	return out, nil
+}
+
+func (value TailStatus) MarshalJSON() ([]byte, error) {
+	type plain TailStatus
+	if value.ErrorInfo == nil {
+		value.ErrorInfo = displayTextMessage(value.Error)
+	}
+	return json.Marshal(plain(value))
 }

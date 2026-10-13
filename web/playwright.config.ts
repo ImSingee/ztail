@@ -1,14 +1,6 @@
+import { buildID } from "./e2e/build-id";
 import { defineConfig } from "@playwright/test";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-const buildID = createHash("sha256")
-  .update(readFileSync("src/main.tsx"))
-  .update(readFileSync("src/catalog.tsx"))
-  .update(readFileSync("src/policy-guide.tsx"))
-  .update(readFileSync("../internal/ztail/manager.go"))
-  .update(readFileSync("../internal/ztail/tailnet.go"))
-  .digest("hex")
-  .slice(0, 12);
+const version = buildID();
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -17,6 +9,7 @@ export default defineConfig({
   expect: { timeout: 15000 },
   use: {
     baseURL: "http://127.0.0.1:18080",
+    locale: "zh-CN",
     browserName: "chromium",
     headless: true,
     trace: "retain-on-failure",
@@ -28,7 +21,7 @@ export default defineConfig({
     url: "http://127.0.0.1:18080/healthz",
     reuseExistingServer: false,
     timeout: 120000,
-    env: { ZTAIL_E2E: "1", ZTAIL_BUILD_ID: buildID },
+    env: { ZTAIL_E2E: "1", ZTAIL_BUILD_ID: version },
   },
   reporter: [["list"], ["json", { outputFile: "test-results/results.json" }]],
 });

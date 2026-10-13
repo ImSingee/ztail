@@ -103,14 +103,14 @@ func (a *App) Handler() http.Handler {
 	mux.Handle("DELETE /api/rules/{id}", a.auth(http.HandlerFunc(a.deleteRule)))
 	mux.Handle("POST /api/rules/{id}/retry", a.auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := a.Store.Get(r.PathValue("id")); err != nil {
-			a.fail(w, 404, errors.New("规则不存在"))
+			a.fail(w, 404, messageError("Rule not found"))
 			return
 		}
 		a.Manager.Wake()
 		jsonResponse(w, 202, map[string]bool{"queued": true})
 	})))
 	mux.Handle("POST /api/probe", a.auth(http.HandlerFunc(a.probe)))
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { a.fail(w, 404, errors.New("接口不存在")) })
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { a.fail(w, 404, messageError("Endpoint not found")) })
 	mux.HandleFunc("/", a.static)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -122,13 +122,13 @@ func (a *App) Handler() http.Handler {
 		}
 		if r.Method != "GET" && r.Method != "HEAD" {
 			if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-				a.fail(w, 403, errors.New("跨站请求已拒绝"))
+				a.fail(w, 403, messageError("Cross-site request rejected"))
 				return
 			}
 			if origin := r.Header.Get("Origin"); origin != "" {
 				u, err := url.Parse(origin)
 				if err != nil || u.Host != r.Host || (u.Scheme != "http" && u.Scheme != "https") {
-					a.fail(w, 403, errors.New("跨站请求已拒绝"))
+					a.fail(w, 403, messageError("Cross-site request rejected"))
 					return
 				}
 			}
@@ -140,12 +140,12 @@ func (a *App) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s, ok := a.getSession(r)
 		if !ok {
-			a.fail(w, 401, errors.New("请登录管理面板"))
+			a.fail(w, 401, messageError("Sign in to the console"))
 			return
 		}
 		if r.Method != "GET" && r.Method != "HEAD" {
 			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(s.CSRF)) != 1 {
-				a.fail(w, 403, errors.New("会话校验失败，请刷新页面"))
+				a.fail(w, 403, messageError("Session validation failed. Refresh the page"))
 				return
 			}
 		}
@@ -192,7 +192,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	if at.Count >= 10 {
 		a.mu.Unlock()
 		w.Header().Set("Retry-After", "900")
-		a.fail(w, 429, errors.New("登录尝试过多，请 15 分钟后重试"))
+		a.fail(w, 429, messageError("Too many sign-in attempts. Retry in 15 minutes"))
 		return
 	}
 	at.Count++
@@ -200,7 +200,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	want, got := sha256.Sum256([]byte(a.Config.Password)), sha256.Sum256([]byte(input.Password))
 	if subtle.ConstantTimeCompare(want[:], got[:]) != 1 {
-		a.fail(w, 401, errors.New("管理员密码错误"))
+		a.fail(w, 401, messageError("Incorrect admin password"))
 		return
 	}
 	value, csrf := a.newSession()
@@ -235,7 +235,7 @@ func (a *App) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResponse(w, 200, map[string]any{
 		"serverId": a.Config.ServerID, "nodeTag": a.Config.NodeTag(), "serviceTag": "tag:ztail-service",
-		"clusterDomain": a.Config.ClusterDomain, "apiKeyConfigured": a.Config.TailscaleKey != "", "withdrawalErrors": a.Manager.WithdrawalErrors(),
+		"clusterDomain": a.Config.ClusterDomain, "apiKeyConfigured": a.Config.TailscaleKey != "", "withdrawalErrors": a.Manager.WithdrawalErrors(), "withdrawalErrorInfos": a.Manager.WithdrawalMessages(),
 		"policy": map[string]any{
 			"tagOwners":     map[string][]string{a.Config.NodeTag(): {"autogroup:admin"}, "tag:ztail-service": {"autogroup:admin"}},
 			"autoApprovers": map[string]any{"services": map[string][]string{"tag:ztail-service": {a.Config.NodeTag()}}},
@@ -281,11 +281,11 @@ func (a *App) saveRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rule.Source == "zeabur" && !a.Catalog.Contains(rule) {
-		a.fail(w, 400, errors.New("所选项目、环境或服务不属于配置的服务器，请刷新目录"))
+		a.fail(w, 400, messageError("The selected project, environment or service does not belong to the configured server. Refresh the catalog"))
 		return
 	}
 	if rule.CreateService && a.Config.TailscaleKey == "" {
-		a.fail(w, 400, errors.New("创建 Service 需要配置 TAILSCALE_API_KEY"))
+		a.fail(w, 400, messageError("Creating a Service requires TAILSCALE_API_KEY"))
 		return
 	}
 	saved, err := a.Store.Save(rule)
@@ -302,7 +302,7 @@ func (a *App) saveRule(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) deleteRule(w http.ResponseWriter, r *http.Request) {
 	if err := a.Store.Delete(r.PathValue("id")); err != nil {
-		a.fail(w, 404, errors.New("规则不存在"))
+		a.fail(w, 404, messageError("Rule not found"))
 		return
 	}
 	a.Manager.Wake()
@@ -318,7 +318,7 @@ func (a *App) probe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rule.Source == "zeabur" && !a.Catalog.Contains(rule) {
-		a.fail(w, 400, errors.New("服务不属于当前服务器"))
+		a.fail(w, 400, messageError("Service does not belong to this server"))
 		return
 	}
 	state := a.Manager.probe(r.Context(), rule)
@@ -328,29 +328,29 @@ func (a *App) probe(w http.ResponseWriter, r *http.Request) {
 	}
 	message := ""
 	if status != 200 {
-		message = "后端不可达，请检查地址、端口和 TLS 证书"
+		message = "Backend unreachable. Check the address, port and TLS certificate"
 		if rule.Protocol == "tcp" {
-			message = "TCP 后端不可达，请检查地址、端口和集群网络"
+			message = "TCP backend unreachable. Check the address, port and cluster network"
 		}
 	}
-	jsonResponse(w, status, map[string]any{"state": state, "target": rule.Target(a.Config.ClusterDomain).String(), "error": message})
+	jsonResponse(w, status, map[string]any{"state": state, "target": rule.Target(a.Config.ClusterDomain).String(), "error": message, "errorInfo": textMessage(message)})
 }
 func (a *App) decode(w http.ResponseWriter, r *http.Request, out any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
-		a.fail(w, 400, errors.New("请求内容无效"))
+		a.fail(w, 400, messageError("Invalid request body"))
 		return false
 	}
 	if d.Decode(new(any)) != io.EOF {
-		a.fail(w, 400, errors.New("请求只能包含一个 JSON 对象"))
+		a.fail(w, 400, messageError("The request must contain exactly one JSON object"))
 		return false
 	}
 	return true
 }
 func (a *App) fail(w http.ResponseWriter, status int, err error) {
-	jsonResponse(w, status, map[string]string{"error": a.Config.Redact(err.Error())})
+	jsonResponse(w, status, map[string]any{"error": a.Config.Redact(err.Error()), "errorInfo": redactMessage(displayErrorMessage(err), a.Config.Redact)})
 }
 func jsonResponse(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

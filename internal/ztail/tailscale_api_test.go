@@ -30,11 +30,11 @@ func TestTailscaleAPICreationError(t *testing.T) {
 func TestTailscaleAPIErrorDetails(t *testing.T) {
 	a := NewTailscaleAPI(Config{Password: "fixture-password", TailscaleKey: "fixture-api"})
 	for _, tc := range []struct{ body, want string }{
-		{`{"message":"name exists but is not a service"}`, "已有节点名称冲突"},
+		{`{"message":"name exists but is not a service"}`, "conflicts with an existing tailnet node"},
 		{`{"message":"invalid service tags"}`, "HTTP 400: invalid service tags"},
 		{`{"error":"invalid port"}`, "HTTP 400: invalid port"},
 		{`{"message":"denied fixture-api fixture-password tskey-auth-transient"}`, "HTTP 400: denied [redacted] [redacted] [redacted]"},
-		{`<html>private upstream debug</html>`, "Tailscale API 返回 HTTP 400"},
+		{`<html>private upstream debug</html>`, "Tailscale API returned HTTP 400"},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
 			got := a.apiError(400, []byte(tc.body)).Error()
@@ -43,7 +43,7 @@ func TestTailscaleAPIErrorDetails(t *testing.T) {
 			}
 		})
 	}
-	if got := a.apiError(403, []byte(`{"message":"access denied"}`)).Error(); !strings.Contains(got, "Services 权限: access denied") {
+	if got := a.apiError(403, []byte(`{"message":"access denied"}`)).Error(); !strings.Contains(got, "Services permissions for this tailnet: access denied") {
 		t.Fatal(got)
 	}
 }
